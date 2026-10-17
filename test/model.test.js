@@ -119,3 +119,19 @@ test('three-way: unchanged side shows as same, not dropped', () => {
   assert.equal(m.lineState(h, 0, 0).state, 'same');
   assert.equal(m.lineState(h, 1, 0).state, 'drop');
 });
+
+test('conflict markers', async () => {
+  const { parseConflicts } = await import('../src/markers.js');
+  const p = parseConflicts(['a', '<<<<<<< HEAD', 'X', '||||||| base', 'b', '=======', 'Y', '>>>>>>> feature', 'c',
+    '<<<<<<< HEAD', 'P', '=======', 'Q', '>>>>>>> feature']);
+  assert.deepEqual(p.ours, ['a', 'X', 'c', 'P']);
+  assert.deepEqual(p.base, ['a', 'b', 'c']);
+  assert.deepEqual(p.theirs, ['a', 'Y', 'c', 'Q']);
+  assert.equal(p.conflicts, 2);
+  assert.equal(p.withoutBase, 1);
+  assert.deepEqual(p.labels, ['HEAD', 'base', 'feature']);
+  assert.throws(() => parseConflicts(['<<<<<<< x', 'a']));
+  // A rebuilt merge gives back one conflict per marker block.
+  const files = [p.ours, p.base, p.theirs].map((l, i) => file(l.join('\n') + '\n', ['o', 'b', 't'][i]));
+  assert.equal(new Merge(files).stats().conflicts, 2);
+});

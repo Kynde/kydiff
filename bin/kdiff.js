@@ -6,10 +6,14 @@ import { loadConfig, configPath } from '../src/config.js';
 import { Terminal } from '../src/term.js';
 import { App } from '../src/app.js';
 import * as git from '../src/git.js';
+import { parseConflicts } from '../src/markers.js';
+import { parseText } from '../src/model.js';
+import fs from 'node:fs';
 
 const USAGE = `usage: kdiff [options] LEFT RIGHT
        kdiff [options] OURS BASE THEIRS
        kdiff --git [PATH...]
+       kdiff FILE-WITH-CONFLICTS
 
 Compare two files side by side and merge them by picking, per difference,
 the left side, the right side, both, or neither, or by editing the result.
@@ -24,6 +28,11 @@ With --git, kdiff resolves the conflicts of a merge, rebase or cherry-pick
 in progress: it reads ours, base and theirs from git's index for each
 conflicted file (or just the PATHs given), saves to the working tree file
 and stages it once no conflicts are left in it.
+
+With a single FILE that has conflict markers, kdiff uses git's index if the
+file is unmerged there, and otherwise rebuilds the three versions from the
+markers (diff3 or zdiff3 style markers include the base) and saves back to
+FILE.
 
 options:
   -o, --output FILE      where the merged result goes by default
@@ -87,9 +96,44 @@ try {
   die(e.message);
 }
 
+// A single file with conflicts: from git's index if it is unmerged there.
+if (!opts.git && opts.files.length === 1 && opts.files[0] !== '-') {
+  try {
+    if (git.conflicts(opts.files).length) opts.git = true;
+  } catch {
+    // Not in a git repository; fall back to the markers.
+  }
+}
+
+// The three versions rebuilt from FILE's conflict markers.
+function loadMarkers(file) {
+  const parsed = parseText(fs.readFileSync(file, 'utf8'));
+  const c = parseConflicts(parsed.lines);
+  if (!c.conflicts) throw new Error('no conflict markers in the file');
+  const roles = [['ours', c.ours], ['base', c.base], ['theirs', c.theirs]];
+  const files = roles.map(([role, lines], i) => ({
+    ...parsed, path: '-', name: file, mtime: null, lines,
+    label: `${file} (${role}${c.labels[i] && c.labels[i] !== role ? `: ${c.labels[i]}` : ''}${role === 'base' && c.withoutBase ? ', not recorded' : ''})`,
+  }));
+  return { files, withoutBase: c.withoutBase };
+}
+
 // Each job is one merge to show: { load(prev) -> Merge, output, afterSave }.
 let jobs;
-if (opts.git) {
+if (!opts.git && opts.files.length === 1) {
+  const file = opts.files[0];
+  let first;
+  try {
+    first = loadMarkers(file);
+  } catch (e) {
+    die(`${file}: ${e.message}`);
+  }
+  jobs = [{
+    load: (prev) => new Merge(prev ? loadMarkers(file).files : first.files, opts.diff),
+    output: opts.output || file,
+    note: first.withoutBase ? `${first.withoutBase} conflict(s) without a base; git config merge.conflictStyle zdiff3 records it` : null,
+  }];
+} else if (opts.git) {
   let found;
   try {
     found = git.conflicts(opts.files);
@@ -160,6 +204,7 @@ function open(i) {
       schedule();
     },
   });
+  if (job.note) app.flash(job.note, true);
 }
 
 const crash = (e) => {

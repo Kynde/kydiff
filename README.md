@@ -10,6 +10,7 @@ kdiff -o merged.js a.js b.js     # with a default output file
 git show HEAD~3:f.c | kdiff - f.c
 kdiff ours.c base.c theirs.c -o merged.c   # 3-way merge
 kdiff --git                      # resolve the conflicts of a merge/rebase
+kdiff conflicted.c               # a file with conflict markers
 ```
 
 ## How it works
@@ -118,6 +119,13 @@ and runs `git add` on it once no conflict markers are left (unless you pass
 `--no-stage`). Quitting moves on to the next file and `Q` stops. It exits with
 status 0 only if every file got resolved.
 
+`kdiff FILE` on a single conflicted file does the same for that file. Outside
+git, or for a file that isn't unmerged, kdiff rebuilds ours, base and theirs
+from the conflict markers and saves back to the file. Only diff3/zdiff3-style
+markers record the base, so it's worth setting
+`git config --global merge.conflictStyle zdiff3`. Without it, a conflict's
+base shows up empty.
+
 It also works as a regular difftool and mergetool:
 
 ```sh
@@ -137,8 +145,6 @@ knows the file wasn't merged.
 
 ## Roadmap
 
-- Reading a file with diff3/zdiff3 conflict markers directly, so a conflicted
-  file can be resolved without git's help.
 - Better alignment when one side inserts code next to a line the other side
   changed (prefer pairing similar lines).
 - Editing identical regions, character-level alignment for moved text.
