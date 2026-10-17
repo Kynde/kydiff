@@ -162,3 +162,7 @@ npm test
 `src/diff.js` holds the Myers line/word diff, `src/model.js` the merge state,
 `src/view.js` the rendering, `src/app.js` the input handling and
 `src/term.js` the terminal I/O.
+
+## Written by
+
+Claude code Opus 5.5 high and me
