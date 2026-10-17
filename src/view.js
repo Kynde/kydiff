@@ -34,7 +34,7 @@ export function render(app, W, H) {
   const scr = new Screen(W, H);
   const t = app.theme;
   if (W < 40 || H < 6) {
-    scr.text(0, 0, 'kdiff: terminal too small', style({ fg: t.warn }));
+    scr.text(0, 0, 'kydiff: terminal too small', style({ fg: t.warn }));
     return scr;
   }
   const g = geometry(app, W, H);

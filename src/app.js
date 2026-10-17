@@ -565,13 +565,13 @@ export class App {
     if (!h) return;
     const initial = this.editText(h);
     const ext = path.extname(this.m.files[1].path) || '.txt';
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kdiff-'));
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'kydiff-'));
     const file = path.join(dir, `hunk-${h.hunk + 1}${ext}`);
     fs.writeFileSync(file, initial.length ? initial.join('\n') + '\n' : '');
     const editor = process.env.VISUAL || process.env.EDITOR || 'vi';
     this.term.stop();
     const fd = this.term.fd;
-    const res = spawnSync(`${editor} "$KDIFF_FILE"`, { shell: true, stdio: [fd, fd === 0 ? 1 : fd, 2], env: { ...process.env, KDIFF_FILE: file } });
+    const res = spawnSync(`${editor} "$KYDIFF_FILE"`, { shell: true, stdio: [fd, fd === 0 ? 1 : fd, 2], env: { ...process.env, KYDIFF_FILE: file } });
     this.term.start();
     this.prevRows = null;
     try {
@@ -717,7 +717,7 @@ export class App {
       }
     } else lines = [...left, ...right];
     lines.push([[`Keys and colors can be changed in ${configPath()}`, 'modalDim']]);
-    this.modal = { title: 'kdiff help', lines, scrollable: true, scroll: 0 };
+    this.modal = { title: 'kydiff help', lines, scrollable: true, scroll: 0 };
   }
 
   // ---- saving and quitting -----------------------------------------------
@@ -771,7 +771,7 @@ export class App {
       let mtime = null;
       try { mtime = fs.statSync(file).mtimeMs; } catch {}
       if (mtime !== null && mtime !== loaded.mtime) {
-        return this.choice('File changed on disk', [`${file} was modified after kdiff read it.`], [
+        return this.choice('File changed on disk', [`${file} was modified after kydiff read it.`], [
           ['y', 'overwrite it anyway', () => this.write(file, unresolved, fmtSide, then, true)],
         ]);
       }

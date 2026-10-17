@@ -1,16 +1,16 @@
-# kdiff
+# kydiff
 
 A side-by-side terminal diff and merge tool in the spirit of xxdiff: identical
 text stays quiet, differences are loud, and every decision is obvious at a
 glance. Plain JavaScript with no dependencies, needs Node 20+.
 
 ```
-kdiff old.js new.js              # compare, merge into either file, save
-kdiff -o merged.js a.js b.js     # with a default output file
-git show HEAD~3:f.c | kdiff - f.c
-kdiff ours.c base.c theirs.c -o merged.c   # 3-way merge
-kdiff --git                      # resolve the conflicts of a merge/rebase
-kdiff conflicted.c               # a file with conflict markers
+kydiff old.js new.js              # compare, merge into either file, save
+kydiff -o merged.js a.js b.js     # with a default output file
+git show HEAD~3:f.c | kydiff - f.c
+kydiff ours.c base.c theirs.c -o merged.c   # 3-way merge
+kydiff --git                      # resolve the conflicts of a merge/rebase
+kydiff conflicted.c               # a file with conflict markers
 ```
 
 ## How it works
@@ -91,7 +91,7 @@ for that line only, click edited text to edit it, wheel to scroll.
 
 ## Configuration
 
-`~/.config/kdiff/config.json` (or under `$XDG_CONFIG_HOME`):
+`~/.config/kydiff/config.json` (or under `$XDG_CONFIG_HOME`):
 
 ```json
 {
@@ -112,15 +112,15 @@ action's defaults. `colors` is merged over the chosen theme (`dark` or
 
 ## git
 
-During a merge, rebase or cherry-pick with conflicts, `kdiff --git` goes
+During a merge, rebase or cherry-pick with conflicts, `kydiff --git` goes
 through the conflicted files one at a time, or just the paths you name. It
 reads ours, base and theirs from git's index, saves to the working tree file,
 and runs `git add` on it once no conflict markers are left (unless you pass
 `--no-stage`). Quitting moves on to the next file and `Q` stops. It exits with
 status 0 only if every file got resolved.
 
-`kdiff FILE` on a single conflicted file does the same for that file. Outside
-git, or for a file that isn't unmerged, kdiff rebuilds ours, base and theirs
+`kydiff FILE` on a single conflicted file does the same for that file. Outside
+git, or for a file that isn't unmerged, kydiff rebuilds ours, base and theirs
 from the conflict markers and saves back to the file. Only diff3/zdiff3-style
 markers record the base, so it's worth setting
 `git config --global merge.conflictStyle zdiff3`. Without it, a conflict's
@@ -129,18 +129,18 @@ base shows up empty.
 It also works as a regular difftool and mergetool:
 
 ```sh
-git config --global difftool.kdiff.cmd 'kdiff -L "$MERGED (old)" -L "$MERGED (new)" "$LOCAL" "$REMOTE"'
+git config --global difftool.kydiff.cmd 'kydiff -L "$MERGED (old)" -L "$MERGED (new)" "$LOCAL" "$REMOTE"'
 git config --global difftool.prompt false
-git difftool -t kdiff HEAD~1
+git difftool -t kydiff HEAD~1
 ```
 
 ```sh
-git config --global mergetool.kdiff.cmd 'kdiff -L "$MERGED (ours)" -L "$MERGED (base)" -L "$MERGED (theirs)" "$LOCAL" "$BASE" "$REMOTE" -o "$MERGED"'
-git config --global mergetool.kdiff.trustExitCode true
-git mergetool -t kdiff
+git config --global mergetool.kydiff.cmd 'kydiff -L "$MERGED (ours)" -L "$MERGED (base)" -L "$MERGED (theirs)" "$LOCAL" "$BASE" "$REMOTE" -o "$MERGED"'
+git config --global mergetool.kydiff.trustExitCode true
+git mergetool -t kydiff
 ```
 
-kdiff exits with status 1 if `-o` was given but nothing was saved, so git
+kydiff exits with status 1 if `-o` was given but nothing was saved, so git
 knows the file wasn't merged.
 
 ## Roadmap

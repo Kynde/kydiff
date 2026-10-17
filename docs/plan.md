@@ -1,4 +1,4 @@
-# kdiff plan
+# kydiff plan
 
 ## The original brief
 
@@ -80,10 +80,10 @@ Kept verbatim as written at the start of the project.
      markers.
 4. **Git** (A2). Done.
    - `git difftool` / `git mergetool` configuration.
-   - `kdiff --git [PATH...]` reads the stages from the index, saves to the
+   - `kydiff --git [PATH...]` reads the stages from the index, saves to the
      working tree, and stages each file once it's resolved.
 5. **Conflicted files directly.** Done.
-   - `kdiff FILE` uses the index when the file is unmerged. Otherwise it rebuilds
+   - `kydiff FILE` uses the index when the file is unmerged. Otherwise it rebuilds
      the versions from diff3/zdiff3 (or plain) conflict markers.
 6. **Port to C or Rust** (A7), once the design settles. Not started.
 

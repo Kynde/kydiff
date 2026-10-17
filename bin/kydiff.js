@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// kdiff: side-by-side terminal diff and merge.
+// kydiff: side-by-side terminal diff and merge.
 
 import { loadFile, Merge } from '../src/model.js';
 import { loadConfig, configPath } from '../src/config.js';
@@ -10,10 +10,10 @@ import { parseConflicts } from '../src/markers.js';
 import { parseText } from '../src/model.js';
 import fs from 'node:fs';
 
-const USAGE = `usage: kdiff [options] LEFT RIGHT
-       kdiff [options] OURS BASE THEIRS
-       kdiff --git [PATH...]
-       kdiff FILE-WITH-CONFLICTS
+const USAGE = `usage: kydiff [options] LEFT RIGHT
+       kydiff [options] OURS BASE THEIRS
+       kydiff --git [PATH...]
+       kydiff FILE-WITH-CONFLICTS
 
 Compare two files side by side and merge them by picking, per difference,
 the left side, the right side, both, or neither, or by editing the result.
@@ -24,12 +24,12 @@ With three files, the base goes in the middle and each side is shown as a
 change to it. Changes only one side made are merged automatically; the
 conflicts are left to you.
 
-With --git, kdiff resolves the conflicts of a merge, rebase or cherry-pick
+With --git, kydiff resolves the conflicts of a merge, rebase or cherry-pick
 in progress: it reads ours, base and theirs from git's index for each
 conflicted file (or just the PATHs given), saves to the working tree file
 and stages it once no conflicts are left in it.
 
-With a single FILE that has conflict markers, kdiff uses git's index if the
+With a single FILE that has conflict markers, kydiff uses git's index if the
 file is unmerged there, and otherwise rebuilds the three versions from the
 markers (diff3 or zdiff3 style markers include the base) and saves back to
 FILE.
@@ -50,10 +50,10 @@ options:
 config: ${configPath()}
 
 git:
-  git config --global difftool.kdiff.cmd 'kdiff -L "$MERGED (old)" -L "$MERGED (new)" "$LOCAL" "$REMOTE"'
-  git config --global mergetool.kdiff.cmd 'kdiff -L "$MERGED (ours)" -L "$MERGED (base)" -L "$MERGED (theirs)" "$LOCAL" "$BASE" "$REMOTE" -o "$MERGED"'
-  git config --global mergetool.kdiff.trustExitCode true
-  git difftool -t kdiff / git mergetool -t kdiff / kdiff --git`;
+  git config --global difftool.kydiff.cmd 'kydiff -L "$MERGED (old)" -L "$MERGED (new)" "$LOCAL" "$REMOTE"'
+  git config --global mergetool.kydiff.cmd 'kydiff -L "$MERGED (ours)" -L "$MERGED (base)" -L "$MERGED (theirs)" "$LOCAL" "$BASE" "$REMOTE" -o "$MERGED"'
+  git config --global mergetool.kydiff.trustExitCode true
+  git difftool -t kydiff / git mergetool -t kydiff / kydiff --git`;
 
 function parseArgs(argv) {
   const o = { files: [], labels: [], output: null, diff: {}, cfg: {}, git: false, stage: true };
@@ -84,7 +84,7 @@ function parseArgs(argv) {
 }
 
 function die(msg) {
-  process.stderr.write(`kdiff: ${msg}\n`);
+  process.stderr.write(`kydiff: ${msg}\n`);
   process.exit(2);
 }
 
@@ -178,8 +178,8 @@ function finish() {
   if (jobs.length > 1 || opts.git) {
     const done = results.filter((r) => r.code === 0).map((r) => r.name);
     const left = jobs.map((j) => j.name).filter((n) => !done.includes(n));
-    if (done.length) console.log(`kdiff: resolved ${done.join(', ')}`);
-    if (left.length) console.log(`kdiff: not resolved ${left.join(', ')}`);
+    if (done.length) console.log(`kydiff: resolved ${done.join(', ')}`);
+    if (left.length) console.log(`kydiff: not resolved ${left.join(', ')}`);
   }
   process.exit(results.length === jobs.length && results.every((r) => r.code === 0) ? 0 : 1);
 }
@@ -209,7 +209,7 @@ function open(i) {
 
 const crash = (e) => {
   term.stop();
-  process.stderr.write(`kdiff: internal error: ${e?.stack || e}\n`);
+  process.stderr.write(`kydiff: internal error: ${e?.stack || e}\n`);
   process.exit(3);
 };
 process.on('uncaughtException', crash);

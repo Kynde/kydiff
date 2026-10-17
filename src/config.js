@@ -1,5 +1,5 @@
 // Defaults for key bindings, colors and options, and loading of the user's
-// overrides from $XDG_CONFIG_HOME/kdiff/config.json.
+// overrides from $XDG_CONFIG_HOME/kydiff/config.json.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -242,7 +242,7 @@ function deepMerge(base, over) {
 
 export function configPath() {
   const dir = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
-  return path.join(dir, 'kdiff', 'config.json');
+  return path.join(dir, 'kydiff', 'config.json');
 }
 
 // overrides (from the command line) win over the config file.
