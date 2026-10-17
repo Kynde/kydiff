@@ -4,6 +4,13 @@ A side-by-side terminal diff and merge tool in the spirit of xxdiff: identical
 text stays quiet, differences are loud, and every decision is obvious at a
 glance. Plain JavaScript with no dependencies, needs Node 20+.
 
+![A three-way merge in kydiff: ours, base and theirs side by side](docs/screenshot1.png)
+
+*A three-way merge with the base in the middle. Theirs adds `mul` and both
+sides change `greet`. The changes only one side made are already merged and
+the two conflicts are left. Lines a side kept from the base are dimmed, so
+each side's actual change stands out.*
+
 ```
 kydiff old.js new.js              # compare, merge into either file, save
 kydiff -o merged.js a.js b.js     # with a default output file
