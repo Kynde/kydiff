@@ -85,7 +85,13 @@ Kept verbatim as written at the start of the project.
 5. **Conflicted files directly.** Done.
    - `kydiff FILE` uses the index when the file is unmerged. Otherwise it rebuilds
      the versions from diff3/zdiff3 (or plain) conflict markers.
-6. **Port to C or Rust** (A7), once the design settles. Not started.
+6. **Line alignment by similarity.** Done.
+   - Inside a difference, similar lines face each other and inserted lines get
+     their own rows, rather than lines pairing by position.
+   - Where Myers' diff could pair a changed block with either of two
+     candidates, it now picks the more similar one. This fixes a function
+     inserted next to a changed one stealing the pairing.
+7. **Port to C or Rust** (A7), once the design settles. Not started.
 
 ## Decisions made along the way
 
@@ -108,7 +114,5 @@ Kept verbatim as written at the start of the project.
 
 ## Open ideas
 
-- Better alignment when one side inserts code next to a line the other side
-  changed (prefer pairing similar lines).
 - Editing inside identical regions.
 - Character-level alignment for moved text.

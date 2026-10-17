@@ -24,9 +24,10 @@ amber while a hunk is unresolved, blue once resolved and purple once edited.
 - **Both** stacks the hunk as a staircase, first side on top and the second
   below it, with 1/2 badges. Press `b` again to flip the order.
 - **Single lines**: `j`/`k` move a line cursor through the differing lines.
-  `H`/`L`/`B`/`X` (Shift = this line only) decide just that line. Lines pair
-  up across the panes the way they are aligned, so you can take line 1 from
-  the right and line 2 from the left.
+  `H`/`L`/`B`/`X` (Shift = this line only) decide just that line. Within a
+  difference, similar lines are paired up across the panes, and inserted
+  lines get rows of their own. So you can take line 1 from the right and line
+  2 from the left.
 - **Editing** (`e`) opens a magenta band under the hunk's original lines,
   spanning both panes, and you edit right there. It starts from the current
   result, or left followed by right if nothing is chosen yet. After editing,
@@ -147,9 +148,6 @@ knows the file wasn't merged.
 
 The original brief and the plan as agreed are kept in [docs/plan.md](docs/plan.md).
 
-
-- Better alignment when one side inserts code next to a line the other side
-  changed (prefer pairing similar lines).
 - Editing identical regions, character-level alignment for moved text.
 - A port to C or Rust once the design settles.
 

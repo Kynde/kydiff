@@ -45,7 +45,7 @@ test('diffLines produces valid ops after sliding (random)', () => {
     const b = Array.from({ length: rnd(20) }, () => words[rnd(words.length)]);
     const ops = diffLines(a, b);
     assert.equal(check(a, b, ops), lcsLen(a, b));
-    for (let k = 1; k < ops.length; k++) assert.notEqual(ops[k].eq, ops[k - 1].eq);
+    for (let k = 1; k < ops.length; k++) assert.ok(!(ops[k].eq && ops[k - 1].eq));
   }
 });
 
@@ -104,4 +104,42 @@ test('diff3 covers all three files (random)', async () => {
     }
     assert.deepEqual(pos, files.map((f) => f.length));
   }
+});
+
+test('alignLines pairs similar lines', async () => {
+  const { alignLines, alignLines3, similarity } = await import('../src/diff.js');
+  assert.ok(similarity('function greet(name) {', "function greet(name, greeting = 'Hello') {") > 0.6);
+  assert.ok(similarity('function greet(name) {', 'function mul(a, b) {') < 0.6);
+  // An inserted line no longer shifts the pairing of the changed ones.
+  const a = ['let x = compute(a);', 'return x + 1;'];
+  const b = ['// new comment line', 'let x = compute(a, b);', 'return x + 2;'];
+  assert.deepEqual(alignLines(a, b), [[-1, 0], [0, 1], [1, 2]]);
+  // Dissimilar leftovers still share rows in order.
+  assert.deepEqual(alignLines(['aaa', 'bbb'], ['xxx']), [[0, 0], [1, -1]]);
+  assert.deepEqual(alignLines([], ['x', 'y']), [[-1, 0], [-1, 1]]);
+  // Every line of both sides appears once, in order (random).
+  let seed = 5;
+  const rnd = (n) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  const word = () => ['foo', 'bar', 'baz', '}', ''][rnd(5)] + (rnd(2) ? ' qux' : '');
+  for (let t = 0; t < 500; t++) {
+    const x = Array.from({ length: rnd(8) }, word), y = Array.from({ length: rnd(8) }, word), z = Array.from({ length: rnd(8) }, word);
+    const rows = alignLines3(x, y, z);
+    [x, y, z].forEach((s, side) => assert.deepEqual(rows.map((r) => r[side]).filter((v) => v >= 0), s.map((_, i) => i)));
+    assert.ok(rows.every((r) => r.some((v) => v >= 0)));
+  }
+});
+
+test('regroup pairs a changed block with its real counterpart', () => {
+  const base = ['add() {', '}', '', 'function greet(name) {', "  log('Hello, ' + name);", '}', '', "export const V = '1.0.0';"];
+  const theirs = ['add() {', '}', '', 'function mul(a, b) {', '  return a * b;', '}', '',
+    "function greet(name, greeting = 'Hello') {", "  log(greeting + ', ' + name);", '}', '', "export const V = '1.0.1';"];
+  const changes = (x, y) => diffLines(x, y).filter((o) => !o.eq).map((o) => [x.slice(o.a0, o.a1), y.slice(o.b0, o.b1)]);
+  const fwd = changes(base, theirs);
+  assert.deepEqual(fwd, [
+    [[], ['function mul(a, b) {', '  return a * b;', '}', '']],
+    [['function greet(name) {', "  log('Hello, ' + name);"], ["function greet(name, greeting = 'Hello') {", "  log(greeting + ', ' + name);"]],
+    [["export const V = '1.0.0';"], ["export const V = '1.0.1';"]],
+  ]);
+  // Mirrored: the same pairing when deleting instead of inserting.
+  assert.deepEqual(changes(theirs, base), fwd.map(([x, y]) => [y, x]));
 });

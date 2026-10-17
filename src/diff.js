@@ -105,7 +105,104 @@ export function diffLines(a, b, opts = {}) {
   const B = Int32Array.from(b, intern);
   const ops = diffSeq(A, B);
   slide(ops, A, B, a, b);
-  return ops.filter((o) => o.a1 > o.a0 || o.b1 > o.b0);
+  return regroup(ops.filter((o) => o.a1 > o.a0 || o.b1 > o.b0), A, B, a, b);
+}
+
+// Myers picks one of several equally short diffs, and sometimes pairs a
+// changed line with the wrong replacement, e.g. when one side adds a
+// function right before a function it also changed:
+//
+//   [change D -> I][equal E][change K -> J+E+R]   (K and/or R may be empty)
+//   is the same as
+//   [insert I+E][change D -> J][equal E][change K -> R]
+//
+// Choose whichever pairs the changed lines with more similar ones. Also
+//
+//   [change D -> I+E+J][equal E]  is the same as  [insert I+E][change D -> J][equal E]
+//
+// which is preferred when D pairs with J alone just as well. The
+// mirrored cases (deleting instead of inserting, or the order reversed) are
+// handled by swapping the sides and/or reversing the sequences.
+function regroup(ops, A, B, a, b) {
+  const swap = (os) => os.map((o) => ({ eq: o.eq, a0: o.b0, a1: o.b1, b0: o.a0, b1: o.a1 }));
+  const rev = (os, n, m) => os.map((o) => ({ eq: o.eq, a0: n - o.a1, a1: n - o.a0, b0: m - o.b1, b1: m - o.b0 })).reverse();
+  const variants = [
+    [(os) => os, (os) => os, A, B, a, b],
+    [swap, swap, B, A, b, a],
+  ];
+  for (let pass = 0; pass < 2; pass++) {
+    for (const [to, from, X, Y, x, y] of variants) {
+      let os = to(ops);
+      if (pass) os = rev(os, X.length, Y.length);
+      const [Xs, Ys, xs, ys] = pass ? [[...X].reverse(), [...Y].reverse(), [...x].reverse(), [...y].reverse()] : [X, Y, x, y];
+      os = regroupForward(os, Xs, Ys, xs, ys);
+      if (pass) os = rev(os, X.length, Y.length);
+      ops = from(os);
+    }
+  }
+  return ops;
+}
+
+function regroupForward(ops, A, B, a, b) {
+  for (let n = 0; n + 1 < ops.length; n++) {
+    const [c, e] = [ops[n], ops[n + 1]];
+    if (c.eq || !e.eq || c.a0 === c.a1 || tooBig(c)) continue;
+    const L = e.a1 - e.a0;
+    const D = a.slice(c.a0, c.a1);
+    const whole = blockSimilarity(D, b.slice(c.b0, c.b1));
+    if (!whole) continue;
+    let best = -1;
+    for (let p = c.b1 - L - 1; p >= c.b0; p--) {
+      let match = true;
+      for (let k = 0; k < L && match; k++) match = B[p + k] === B[e.b0 + k];
+      if (match && blockSimilarity(D, b.slice(p + L, c.b1)) >= whole - 0.01) { best = p; break; }
+    }
+    if (best < 0) continue;
+    ops.splice(n, 1,
+      { eq: false, a0: c.a0, a1: c.a0, b0: c.b0, b1: best + L },
+      { eq: false, a0: c.a0, a1: c.a1, b0: best + L, b1: c.b1 });
+  }
+  for (let n = 0; n + 2 < ops.length; n++) {
+    const [c, e, j] = [ops[n], ops[n + 1], ops[n + 2]];
+    if (c.eq || !e.eq || j.eq || c.a0 === c.a1 || c.b0 === c.b1 || tooBig(c) || tooBig(j)) continue;
+    const L = e.a1 - e.a0;
+    const D = a.slice(c.a0, c.a1), I = b.slice(c.b0, c.b1), K = a.slice(j.a0, j.a1);
+    const current = blockSimilarity(D, I) + blockSimilarity(K, b.slice(j.b0, j.b1));
+    let best = -1, bestScore = current + 0.01;
+    // Where E appears again in the new side of the next change.
+    for (let p = j.b0 + 1; p + L <= j.b1; p++) {
+      let match = true;
+      for (let k = 0; k < L && match; k++) match = B[p + k] === B[e.b0 + k];
+      if (!match) continue;
+      const score = blockSimilarity(D, b.slice(j.b0, p)) + blockSimilarity(K, b.slice(p + L, j.b1));
+      if (score > bestScore) { best = p; bestScore = score; }
+    }
+    if (best < 0) continue;
+    const out = [
+      { eq: false, a0: c.a0, a1: c.a0, b0: c.b0, b1: e.b1 },
+      { eq: false, a0: c.a0, a1: c.a1, b0: j.b0, b1: best },
+      { eq: true, a0: e.a0, a1: e.a1, b0: best, b1: best + L },
+      { eq: false, a0: j.a0, a1: j.a1, b0: best + L, b1: j.b1 },
+    ].filter((o) => o.a1 > o.a0 || o.b1 > o.b0);
+    ops.splice(n, 3, ...out);
+  }
+  // Merge equal runs the rewrite may have left side by side. Adjacent
+  // changes stay apart: they are separate decisions.
+  const out = [];
+  for (const o of ops) {
+    const last = out[out.length - 1];
+    if (last?.eq && o.eq) { last.a1 = o.a1; last.b1 = o.b1; } else out.push({ ...o });
+  }
+  return out;
+}
+
+// Regrouping compares blocks pairwise; leave huge rewrites as they are.
+const tooBig = (o) => (o.a1 - o.a0) * (o.b1 - o.b0) > 20000;
+
+function blockSimilarity(x, y) {
+  let score = 0;
+  for (const [i, j] of alignLines(x, y)) if (i >= 0 && j >= 0) score += similarity(x[i], y[j]);
+  return score;
 }
 
 // A pure insertion (or deletion) that is surrounded by lines equal to its own
@@ -224,4 +321,95 @@ export function diff3(ours, base, theirs, opts = {}, mo = matchLines(base, ours,
     o = oe; b = e; t = te;
   }
   return out;
+}
+
+// How alike two lines are, 0..1: overlap of their words weighted by length,
+// so renaming one identifier in a line keeps it recognisably the same line.
+// Lines without words (braces, blank) only match themselves.
+const WORD = /[\p{L}\p{N}_]+/gu;
+
+function wordBag(s) {
+  const bag = new Map();
+  let total = 0;
+  for (const w of s.match(WORD) || []) { bag.set(w, (bag.get(w) || 0) + 1); total += w.length; }
+  return { bag, total, bare: s.trim() };
+}
+
+function bagSimilarity(x, y) {
+  if (!x.total || !y.total) return x.bare === y.bare && !x.total && !y.total ? 1 : 0;
+  let common = 0;
+  const [small, big] = x.bag.size < y.bag.size ? [x, y] : [y, x];
+  for (const [w, n] of small.bag) {
+    const m = big.bag.get(w);
+    if (m) common += Math.min(n, m) * w.length;
+  }
+  return (2 * common) / (x.total + y.total);
+}
+
+export function similarity(a, b) {
+  return a === b ? 1 : bagSimilarity(wordBag(a), wordBag(b));
+}
+
+// Pair up the lines of a changed block so that similar lines face each
+// other: an optimal monotonic matching of pairs at least `threshold` alike.
+// Lines left over between matches share rows in order, like a side-by-side
+// diff of replaced lines. Returns rows [[i or -1, j or -1], ...] covering
+// both. Very large blocks are paired by position.
+export function alignLines(a, b, { threshold = 0.6, maxCells = 250000 } = {}) {
+  const n = a.length, m = b.length;
+  const pairs = [];
+  if (n && m && n * m <= maxCells) {
+    const ba = a.map(wordBag), bb = b.map(wordBag);
+    const W = m + 1;
+    const S = new Float64Array((n + 1) * W);
+    const sim = new Float64Array(n * m);
+    for (let i = 1; i <= n; i++) {
+      for (let j = 1; j <= m; j++) {
+        const s = a[i - 1] === b[j - 1] ? 1 : bagSimilarity(ba[i - 1], bb[j - 1]);
+        sim[(i - 1) * m + j - 1] = s;
+        let best = Math.max(S[(i - 1) * W + j], S[i * W + j - 1]);
+        if (s >= threshold) best = Math.max(best, S[(i - 1) * W + j - 1] + s);
+        S[i * W + j] = best;
+      }
+    }
+    for (let i = n, j = m; i > 0 && j > 0;) {
+      const s = sim[(i - 1) * m + j - 1];
+      if (s >= threshold && S[i * W + j] === S[(i - 1) * W + j - 1] + s) { pairs.push([i - 1, j - 1]); i--; j--; }
+      else if (S[i * W + j] === S[(i - 1) * W + j]) i--;
+      else j--;
+    }
+    pairs.reverse();
+  }
+  const rows = [];
+  let pi = 0, pj = 0;
+  for (const [i, j] of [...pairs, [n, m]]) {
+    for (let k = 0; k < Math.max(i - pi, j - pj); k++) rows.push([pi + k < i ? pi + k : -1, pj + k < j ? pj + k : -1]);
+    if (i < n || j < m) rows.push([i, j]);
+    pi = i + 1; pj = j + 1;
+  }
+  return rows;
+}
+
+// Three-way rows for a block: each side aligned to the base, joined on the
+// base lines. Side lines without a base counterpart go before the next base
+// line, ours and theirs sharing rows in order. Rows are [o, b, t].
+export function alignLines3(ours, base, theirs, opts) {
+  const split = (rows) => {
+    const of = new Int32Array(base.length).fill(-1);
+    const before = Array.from({ length: base.length + 1 }, () => []);
+    let pending = [];
+    for (const [x, b] of rows) {
+      if (b >= 0) { of[b] = x; before[b] = pending; pending = []; } else pending.push(x);
+    }
+    before[base.length] = pending;
+    return { of, before };
+  };
+  const o = split(alignLines(ours, base, opts)), t = split(alignLines(theirs, base, opts));
+  const rows = [];
+  for (let i = 0; i <= base.length; i++) {
+    const eo = o.before[i], et = t.before[i];
+    for (let k = 0; k < Math.max(eo.length, et.length); k++) rows.push([eo[k] ?? -1, -1, et[k] ?? -1]);
+    if (i < base.length) rows.push([o.of[i], i, t.of[i]]);
+  }
+  return rows;
 }

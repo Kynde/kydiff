@@ -4,8 +4,11 @@
 // A hunk's decision is one of
 //   sel  = null        unresolved
 //   sel  = [i, j, ...] take these sides' lines, in this order ([] = neither)
-//   rows = [sel, ...]  a decision per row, where row k pairs line k of each
-//                      side the way the panes align them (overrides sel)
+//   rows = [sel, ...]  a decision per row (overrides sel)
+//
+// A hunk's rows pair up similar lines across the sides: h.align[r] holds the
+// line index (or -1) of each side on row r, and h.rowOf[side][k] the row of
+// line k.
 //   edit = [lines]     hand-edited result (overrides both)
 //
 // Everything is indexed by side. Two-way merges have sides left, right;
@@ -14,7 +17,7 @@
 // resolved automatically; the rest are conflicts.
 
 import fs from 'node:fs';
-import { diffLines, diff3, matchLines, wordDiff, normalizer } from './diff.js';
+import { diffLines, diff3, matchLines, wordDiff, normalizer, alignLines, alignLines3 } from './diff.js';
 
 export function parseText(text) {
   let bom = false;
@@ -79,11 +82,26 @@ export class Merge {
       this.segments.push(seg);
       if (seg.type === 'hunk') {
         seg.hunk = this.hunks.length;
-        seg.height = Math.max(...seg.lens);
+        this.#align(seg);
         if (this.three) this.#autoResolve(seg);
         this.hunks.push(seg);
       }
     }
+  }
+
+  #align(h) {
+    const ls = this.files.map((_, side) => this.lines(h, side));
+    h.align = this.three ? alignLines3(...ls) : alignLines(...ls);
+    h.height = h.align.length;
+    h.rowOf = ls.map((l) => new Int32Array(l.length));
+    h.align.forEach((row, r) => row.forEach((k, side) => { if (k >= 0) h.rowOf[side][k] = r; }));
+  }
+
+  // The lines of a side on rows [r0, r1).
+  rowLines(h, side, [r0, r1]) {
+    const out = [];
+    for (let r = r0; r < r1; r++) if (h.align[r][side] >= 0) out.push(this.line(h, side, h.align[r][side]));
+    return out;
   }
 
   // Three-way: take the side that changed when the other didn't, or either
@@ -131,30 +149,31 @@ export class Merge {
   // a side line kept from the base, or a base line both sides kept.
   lineState(h, side, k) {
     if (h.edit) return { state: 'edit', order: 0 };
-    const s = this.rowSel(h, k);
+    const row = h.align[h.rowOf[side][k]];
+    const s = this.rowSel(h, h.rowOf[side][k]);
     if (!s) return { state: 'open', order: 0, quiet: !!this.kept?.[side][h.start[side] + k] };
     if (s.includes(side)) return { state: 'take', order: s.length > 1 ? s.indexOf(side) + 1 : 0 };
     const text = this.norm(this.line(h, side, k));
-    const eq = (o) => k < h.lens[o] && this.norm(this.line(h, o, k)) === text;
+    const eq = (o) => row[o] >= 0 && this.norm(this.line(h, o, row[o])) === text;
     if (s.some(eq) || (this.three && side !== this.base && eq(this.base))) return { state: 'same', order: 0 };
     return { state: 'drop', order: 0 };
   }
 
   // The result lines of a hunk tagged with their origin, { text, src, line }
   // with src a side index or 'edit'; unresolved rows produce
-  // { open: [k0, k1) } placeholders.
+  // { open: [r0, r1) } placeholders. A hunk-level choice takes each side's
+  // lines as a block; per-row choices go row by row.
   tagged(h) {
     if (h.edit) return h.edit.map((text) => ({ text, src: 'edit' }));
-    const take = (sides, k0, k1) => {
-      const out = [];
-      for (const side of sides) for (let k = k0; k < Math.min(k1, h.lens[side]); k++) out.push({ text: this.line(h, side, k), src: side, line: k });
-      return out;
-    };
-    if (!h.rows) return h.sel ? take(h.sel, 0, h.height) : [{ open: [0, h.height] }];
+    const tag = (side, line) => ({ text: this.line(h, side, line), src: side, line });
+    if (!h.rows) {
+      if (!h.sel) return [{ open: [0, h.height] }];
+      return h.sel.flatMap((side) => Array.from({ length: h.lens[side] }, (_, k) => tag(side, k)));
+    }
     const out = [];
     for (let k = 0; k < h.height; k++) {
       const s = h.rows[k];
-      if (s) out.push(...take(s, k, k + 1));
+      if (s) for (const side of s) { if (h.align[k][side] >= 0) out.push(tag(side, h.align[k][side])); }
       else if (out.length && out[out.length - 1].open) out[out.length - 1].open[1] = k + 1;
       else out.push({ open: [k, k + 1] });
     }
@@ -218,19 +237,20 @@ export class Merge {
   }
 
   // Intra-line highlight ranges for a hunk: ranges[side][k] for line k,
-  // pairing lines positionally the way side-by-side GitHub diffs do.
-  // Three-way, each side is compared with the base, and the base shows what
-  // either side changed in it.
+  // comparing the lines that share a row. Three-way, each side is compared
+  // with the base, and the base shows what either side changed in it.
   words(h) {
     let w = this.wordCache.get(h);
     if (w) return w;
     w = this.files.map(() => []);
     const pair = (x, y, intoY) => {
-      for (let k = 0; k < Math.min(h.lens[x], h.lens[y]); k++) {
-        const r = wordDiff(this.line(h, x, k), this.line(h, y, k));
+      for (const row of h.align) {
+        const i = row[x], j = row[y];
+        if (i < 0 || j < 0) continue;
+        const r = wordDiff(this.line(h, x, i), this.line(h, y, j));
         if (!r) continue;
-        w[x][k] = r[0];
-        w[y][k] = intoY && w[y][k] ? unionRanges(w[y][k], r[1]) : r[1];
+        w[x][i] = r[0];
+        w[y][j] = intoY && w[y][j] ? unionRanges(w[y][j], r[1]) : r[1];
       }
     };
     if (this.three) {
@@ -247,7 +267,7 @@ export class Merge {
   //   unresolved: a side index to fall back on, or 'markers'
   output({ eqSide = this.defaultEqSide, unresolved = 'markers' } = {}) {
     const out = [];
-    const range = (h, side, [k0, k1]) => this.lines(h, side).slice(k0, k1);
+    const range = (h, side, rows) => this.rowLines(h, side, rows);
     const [l, r] = this.outer;
     for (const seg of this.segments) {
       if (seg.type === 'eq') { out.push(...this.lines(seg, eqSide)); continue; }

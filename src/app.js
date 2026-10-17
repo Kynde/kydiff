@@ -171,7 +171,7 @@ export class App {
         o -= h.lens[side];
       }
     } else if (off < l.P) {
-      h.lens.forEach((n, side) => { if (off < n) lines[side] = off; });
+      h.align[off].forEach((k, side) => { lines[side] = k; });
     } else if (l.kind === 'edited' && off - l.P < l.band) band = off - l.P;
     return { lines, band, layout: l };
   }
@@ -385,14 +385,22 @@ export class App {
     if (!h) return;
     const info = this.rowInfo(h, off);
     if (info.band >= 0) return this.flash('that is the edited text; e edits it', true);
-    const k = info.lines.find((x) => x >= 0);
-    if (k === undefined) return;
+    const k = this.alignRow(h, info);
+    if (k < 0) return;
     const both = this.bothSel();
     if (sel === 'both') sel = same(this.m.rowSel(h, k), both) && !h.edit ? [...both].reverse() : both;
     this.m.applyRow(h, k, sel);
     this.buildRows();
-    // Keep the cursor on the same line even if the layout changed.
-    for (let r = 0; r < this.contentHeight(h); r++) if (this.rowInfo(h, r).lines.includes(k)) { this.lineOff = r; break; }
+    // Keep the cursor on the same row even if the layout changed.
+    for (let r = 0; r < this.contentHeight(h); r++) if (this.alignRow(h, this.rowInfo(h, r)) === k) { this.lineOff = r; break; }
+  }
+
+  // The aligned row (decision row) a display row shows: the same row in the
+  // positional layout, else the row of whichever line it shows.
+  alignRow(h, info) {
+    if (info.band >= 0) return -1;
+    const side = info.lines.findIndex((x) => x >= 0);
+    return side < 0 ? -1 : h.rowOf[side][info.lines[side]];
   }
 
   chooseAll(sel) {
@@ -548,7 +556,7 @@ export class App {
   // filled in as left then right.
   editText(h) {
     return this.m.tagged(h).flatMap((e) => e.open
-      ? this.m.outer.flatMap((side) => this.m.lines(h, side).slice(e.open[0], e.open[1]))
+      ? this.m.outer.flatMap((side) => this.m.rowLines(h, side, e.open))
       : [e.text]);
   }
 
