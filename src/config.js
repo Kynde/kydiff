@@ -18,13 +18,14 @@ export const ACTIONS = [
     ['scrollUp', ['K', 'C-y'], 'scroll up one line'],
     ['halfPageDown', ['C-d'], 'scroll half a page down'],
     ['halfPageUp', ['C-u'], 'scroll half a page up'],
-    ['pageDown', ['pagedown', 'space', 'C-f'], 'page down'],
+    ['pageDown', ['pagedown', 'space'], 'page down'],
     ['pageUp', ['pageup', 'C-b'], 'page up'],
     ['top', ['g', 'home'], 'go to top'],
     ['bottom', ['G', 'end'], 'go to bottom'],
     ['scrollRight', ['>', 'M-right'], 'scroll right'],
     ['scrollLeft', ['<', 'M-left'], 'scroll left'],
     ['scrollHome', ['0'], 'scroll back to the first column'],
+    ['search', ['/', 'C-f'], 'search; then n/p go to next/previous match, Esc ends it'],
   ]],
   ['Choose', [
     ['selectLeft', ['h', 'left', '1'], 'take the left side'],
@@ -103,6 +104,7 @@ const DARK = {
   edited: { fg: '#f0f6fc', bg: '#2e2152' },
   editing: { fg: '#ffffff', bg: '#3d2b70' },
   unresolved: { fg: '#e3b341', bg: '#2b2210', italic: true },
+  match: { fg: '#0d1117', bg: '#f2cc60', bold: true },
   syntax: {
     keyword: { fg: '#d2a8ff' }, string: { fg: '#a5d6ff' }, number: { fg: '#79c0ff' }, constant: { fg: '#79c0ff' },
     comment: { fg: '#9ea7b3', italic: true }, func: { fg: '#ffa657' }, type: { fg: '#ffd580' },
@@ -152,6 +154,7 @@ const LIGHT = {
   edited: { fg: '#1f2328', bg: '#efe5ff' },
   editing: { fg: '#1f2328', bg: '#ddd0ff' },
   unresolved: { fg: '#9a6700', bg: '#fff8c5', italic: true },
+  match: { fg: '#1f2328', bg: '#ffd33d', bold: true },
   syntax: {
     keyword: { fg: '#8250df' }, string: { fg: '#0a3069' }, number: { fg: '#0550ae' }, constant: { fg: '#0550ae' },
     comment: { fg: '#6e7781', italic: true }, func: { fg: '#953800' }, type: { fg: '#6639ba' },

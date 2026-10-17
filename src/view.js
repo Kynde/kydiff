@@ -232,6 +232,9 @@ function drawText(app, scr, x, y, width, str, stObj, hlObj, ranges, { hs = app.h
   const plain = style(stObj), plainHl = hlObj ? style(hlObj) : plain;
   const ctrl = style(mix(stObj, app.theme.ctrl));
   const toks = syn ? syn.fn(str) : null;
+  const found = app.search ? [...str.matchAll(app.search.re)].filter((m) => m[0]).map((m) => [m.index, m.index + m[0].length]) : [];
+  const matchSt = style(app.theme.match);
+  let fi = 0;
   scr.fill(x, y, width, 1, ' ', style(mix(stObj, { strike: false })));
   let col = 0, ri = 0, ti = 0, lastX = -1;
   for (let i = 0; i < str.length;) {
@@ -244,6 +247,8 @@ function drawText(app, scr, x, y, width, str, stObj, hlObj, ranges, { hs = app.h
       while (ti < toks.length && toks[ti][1] <= i) ti++;
       if (ti < toks.length && toks[ti][0] <= i) cst = style(mix(inHl ? hlObj : stObj, syn.palette[toks[ti][2]]));
     }
+    while (fi < found.length && found[fi][1] <= i) fi++;
+    if (fi < found.length && found[fi][0] <= i) cst = matchSt;
     let ch = String.fromCodePoint(cp), w = cpWidth(cp), cs = cst;
     if (cp === 9) {
       const n = tw - (col % tw);
@@ -322,9 +327,13 @@ function drawStatus(app, scr, g) {
       else badge('✓ all resolved', t.ok);
       if (st.edited) badge(`${EDIT_MARK} ${st.edited}`, t.edit);
     }
+    if (app.search) {
+      const sr = app.search;
+      badge(`/${sr.query}  ${sr.matches.length ? `${sr.idx + 1}/${sr.matches.length}` : 'no matches'}`, t.match.bg);
+    }
     if (app.dirty) text('● modified ', { fg: t.danger, bg: t.bar.bg, bold: true });
     if (app.msg) text(` ${app.msg.text}`, { fg: app.msg.warn ? t.warn : t.modalTitle.fg, bg: t.bar.bg, bold: app.msg.warn });
-    hints = [['h/l', 'take'], ['H/L', 'line'], ['b', 'both'], ['x', 'neither'], ['e', 'edit'], ['n/p', 'hunk'], ['s', 'save'], ['?', 'help']];
+    hints = app.search ? [['n/p', 'next/prev match'], ['Esc', 'end search'], ['?', 'help']] : [['h/l', 'take'], ['H/L', 'line'], ['b', 'both'], ['x', 'neither'], ['e', 'edit'], ['n/p', 'hunk'], ['s', 'save'], ['?', 'help']];
   }
   // Key hints on the right, as many as fit (help always stays).
   const widthOf = (hs) => hs.reduce((a, [k, d]) => a + k.length + d.length + 3, 0);

@@ -35,6 +35,7 @@ export class App {
     this.drag = null;
     this.geom = null;
     this.syntaxOn = cfg.syntax;
+    this.search = null; // { query, re, matches: [{ si, side, k }], idx }
     this.setModel(model);
   }
 
@@ -46,6 +47,7 @@ export class App {
     this.savedVersion = 0;
     this.overwritten = new Set(); // sides whose file we saved over
     this.rows = null;
+    if (this.search) this.setSearch(this.search.query, model);
     this.highlighters = model.files.map((f) => highlighter(f.label + ' ' + f.path));
     this.changed = model.files.map((_, side) => model.hunks.reduce((n, h) => n + h.lens[side], 0));
     this.buildRows();
@@ -231,7 +233,13 @@ export class App {
     if (this.editor) return this.editorKey(ev);
     if (typeof ev === 'object') return; // stray paste
     this.msg = null;
-    const action = this.cfg.keymap.get(ev);
+    let action = this.cfg.keymap.get(ev);
+    // While a search is active, next/previous difference walk the matches.
+    if (this.search) {
+      if (ev === 'escape') { this.search = null; return; }
+      if (action === 'nextHunk') action = 'nextMatch';
+      if (action === 'prevHunk') action = 'prevMatch';
+    }
     if (action && this.actions[action]) this.actions[action]();
   }
 
@@ -278,6 +286,9 @@ export class App {
     help: () => this.showHelp(),
     redraw: () => { this.prevRows = null; },
     reload: () => this.reload(),
+    search: () => this.promptSearch(),
+    nextMatch: () => this.gotoMatch(1),
+    prevMatch: () => this.gotoMatch(-1),
     save: () => this.save(),
     quit: () => this.quit(),
     forceQuit: () => this.exit(),
@@ -371,6 +382,71 @@ export class App {
     this.buildRows();
     this.reveal(step[0].h);
     this.flash(`${which} (${step.length} difference${step.length > 1 ? 's' : ''})`);
+  }
+
+  // ---- search ---------------------------------------------------------
+
+  promptSearch() {
+    const b = new Buffer([this.search?.query || ''], { multiline: false });
+    b.end();
+    this.modal = {
+      title: 'Search', lines: [[['Text to find in either file (case-insensitive unless it has capitals):', 'modalDim']]], input: b,
+      submit: (q) => {
+        if (!q) { this.search = null; return; }
+        this.setSearch(q);
+        if (!this.search.matches.length) return this.flash(`not found: ${q}`, true);
+        // Start from the first match at or below the top of the view.
+        const top = this.top;
+        const i = this.search.matches.findIndex((mt) => this.matchRow(mt) >= top);
+        this.search.idx = (i < 0 ? 0 : i) - 1;
+        this.gotoMatch(1, true);
+      },
+    };
+  }
+
+  setSearch(query, m = this.m) {
+    const esc = query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re = new RegExp(esc, /\p{Lu}/u.test(query) ? 'gu' : 'giu');
+    const matches = [];
+    const test = (s) => { re.lastIndex = 0; return re.test(s); };
+    for (const seg of m.segments) {
+      if (seg.type === 'eq') {
+        for (let k = 0; k < seg.len; k++) if (test(m.files[0].lines[seg.start[0] + k])) matches.push({ si: seg.index, side: 0, k });
+        continue;
+      }
+      for (let k = 0; k < seg.height; k++) {
+        for (let side = 0; side < m.sides; side++) {
+          if (k < seg.lens[side] && test(m.line(seg, side, k))) { matches.push({ si: seg.index, side, k }); break; }
+        }
+      }
+    }
+    this.search = { query, re, matches, idx: -1 };
+  }
+
+  // The display row showing a match, unfolding its region if needed.
+  matchRow({ si, side, k }) {
+    const seg = this.m.segments[si];
+    if (seg.type === 'eq') return this.findRow(si, k);
+    for (let off = 0; off < this.contentHeight(seg); off++) {
+      const lines = this.rowInfo(seg, off).lines;
+      if (lines[side] === k || (lines[side] < 0 && lines.includes(k))) return this.segRow[si] + off;
+    }
+    return this.segRow[si];
+  }
+
+  gotoMatch(dir, first = false) {
+    const sr = this.search;
+    if (!sr?.matches.length) return this.flash('no search; / searches', true);
+    const n = sr.matches.length;
+    let i = sr.idx + dir;
+    if (i < 0 || i >= n) { i = (i + n) % n; if (!first) this.flash('search wrapped around'); }
+    sr.idx = i;
+    const mt = sr.matches[i];
+    const seg = this.m.segments[mt.si];
+    if (seg.type === 'eq' && this.fold && !this.expanded.has(mt.si)) { this.expanded.add(mt.si); this.buildRows(); }
+    const r = this.matchRow(mt);
+    if (seg.type === 'hunk') { this.cur = seg.hunk; this.lineOff = r - this.segRow[mt.si]; }
+    if (r < this.top || r >= this.top + this.bodyH) { this.top = r - Math.floor(this.bodyH / 3); this.clampTop(); }
   }
 
   // ---- in-place editing -------------------------------------------------
