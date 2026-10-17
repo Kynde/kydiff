@@ -55,6 +55,7 @@ export const ACTIONS = [
   ]],
   ['File', [
     ['save', ['s', 'C-s'], 'save the merged result'],
+    ['reload', ['R'], 'reload the files from disk and diff again'],
     ['quit', ['q', 'C-c'], 'quit'],
     ['forceQuit', ['Q'], 'quit without asking'],
   ]],

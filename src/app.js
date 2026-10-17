@@ -14,15 +14,15 @@ import { ACTIONS, EDITOR_HELP, configPath } from './config.js';
 const same = (a, b) => a === b || (!!a && !!b && a.length === b.length && a.every((v, i) => v === b[i]));
 
 export class App {
-  constructor({ model, cfg, term, output = null }) {
-    this.m = model;
+  // load(prev) builds the model from the files on disk; prev is the current
+  // model, for inputs that can't be read again (stdin).
+  constructor({ model, cfg, term, output = null, load = null }) {
     this.cfg = cfg;
+    this.load = load;
     this.theme = cfg.themeColors;
     this.term = term;
     this.output = output;
     this.top = 0;
-    this.cur = 0;
-    this.lineOff = 0; // line cursor: display row within the current hunk
     this.hs = 0;
     this.showMerged = cfg.showMerged;
     this.fold = cfg.fold;
@@ -30,16 +30,42 @@ export class App {
     this.editor = null;
     this.modal = null;
     this.msg = null;
-    this.savedVersion = 0;
     this.saved = false;
     this.prevRows = null;
     this.drag = null;
     this.geom = null;
     this.syntaxOn = cfg.syntax;
+    this.setModel(model);
+  }
+
+  setModel(model) {
+    this.m = model;
+    this.top = 0;
+    this.cur = 0;
+    this.lineOff = 0; // line cursor: display row within the current hunk
+    this.savedVersion = 0;
+    this.overwritten = new Set(); // sides whose file we saved over
+    this.rows = null;
     this.highlighters = model.files.map((f) => highlighter(f.label + ' ' + f.path));
     this.changed = model.files.map((_, side) => model.hunks.reduce((n, h) => n + h.lens[side], 0));
     this.buildRows();
     if (this.m.hunks.length) this.reveal(this.m.hunks[0]);
+  }
+
+  reload(force = false) {
+    if (!this.load) return this.flash('cannot reload', true);
+    if (this.dirty && !force) {
+      return this.choice('Reload from disk', ['This discards the choices and edits made so far.'], [
+        ['y', 'reload anyway', () => this.reload(true)],
+      ]);
+    }
+    try {
+      this.setModel(this.load(this.m));
+    } catch (e) {
+      return this.flash(`could not reload: ${e.message}`, true);
+    }
+    this.expanded.clear();
+    this.flash(`reloaded: ${this.m.hunks.length} difference${this.m.hunks.length === 1 ? '' : 's'}`);
   }
 
   // Syntax coloring for a side's text: the full palette, or the quiet one
@@ -251,6 +277,7 @@ export class App {
     toggleSyntax: () => { this.syntaxOn = !this.syntaxOn; },
     help: () => this.showHelp(),
     redraw: () => { this.prevRows = null; },
+    reload: () => this.reload(),
     save: () => this.save(),
     quit: () => this.quit(),
     forceQuit: () => this.exit(),
@@ -646,10 +673,13 @@ export class App {
     } catch (e) {
       return this.flash(`could not save: ${e.message}`, true);
     }
-    if (loaded) try { loaded.mtime = fs.statSync(file).mtimeMs; } catch {}
+    if (loaded) {
+      try { loaded.mtime = fs.statSync(file).mtimeMs; } catch {}
+      this.overwritten.add(this.m.files.indexOf(loaded));
+    }
     this.savedVersion = this.m.version;
     this.saved = true;
-    this.flash(`wrote ${lines.length} lines to ${file}`);
+    this.flash(`wrote ${lines.length} lines to ${file}${loaded ? ' \u2014 R reloads and re-diffs' : ''}`);
     if (then) then();
   }
 

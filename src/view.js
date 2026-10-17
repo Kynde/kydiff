@@ -70,7 +70,8 @@ function drawHeader(app, scr, g) {
       continue;
     }
     const f = app.m.files[p.side], sc = t.sides[p.side];
-    const info = `${f.lines.length} lines${f.eol === '\r\n' ? ' CRLF' : ''}${f.eofNewline || !f.lines.length ? '' : ' no-EOL'}`;
+    const saved = app.overwritten.has(p.side) ? 'saved over \u00b7 ' : '';
+    const info = `${saved}${f.lines.length} lines${f.eol === '\r\n' ? ' CRLF' : ''}${f.eofNewline || !f.lines.length ? '' : ' no-EOL'}`;
     const count = changed[p.side] ? `${sc.sign}${changed[p.side]}` : '';
     const tail = strWidth(info) + (count ? count.length + 2 : 0) + 2;
     let label = f.label;

@@ -66,17 +66,20 @@ if (opts.files.length === 3) die('3-way merging is not implemented yet');
 if (opts.files.length !== 2) die(`need two files to compare\n\n${USAGE}`);
 if (opts.files.filter((f) => f === '-').length > 1) die('only one file can come from stdin');
 
+// stdin can only be read once; a reload keeps what was read.
+const load = (prev) => new Merge(
+  opts.files.map((f, i) => (f === '-' && prev ? prev.files[i] : loadFile(f, opts.labels[i]))), opts.diff);
+
 let model, cfg;
 try {
   cfg = loadConfig(opts.cfg);
-  const files = opts.files.map((f, i) => loadFile(f, opts.labels[i]));
-  model = new Merge(files, opts.diff);
+  model = load(null);
 } catch (e) {
   die(e.message);
 }
 
 const term = new Terminal({ mouse: cfg.mouse });
-const app = new App({ model, cfg, term, output: opts.output });
+const app = new App({ model, cfg, term, output: opts.output, load });
 
 let pending = false;
 const schedule = () => {
