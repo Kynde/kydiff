@@ -69,3 +69,39 @@ test('wordDiff marks changed words', () => {
   assert.deepEqual(rb, [[10, 13]]);
   assert.equal(wordDiff('completely different', 'nothing alike here'), null);
 });
+
+test('diff3 regions', async () => {
+  const { diff3 } = await import('../src/diff.js');
+  const base = ['a', 'b', 'c', 'd', 'e'];
+  const ours = ['a', 'B', 'c', 'd', 'e', 'f'];
+  const theirs = ['a', 'b', 'c', 'D', 'e'];
+  const r = diff3(ours, base, theirs);
+  assert.deepEqual(r.map((x) => [x.eq, x.start, x.lens]), [
+    [true, [0, 0, 0], [1, 1, 1]],
+    [false, [1, 1, 1], [1, 1, 1]],
+    [true, [2, 2, 2], [1, 1, 1]],
+    [false, [3, 3, 3], [1, 1, 1]],
+    [true, [4, 4, 4], [1, 1, 1]],
+    [false, [5, 5, 5], [1, 0, 0]],
+  ]);
+});
+
+test('diff3 covers all three files (random)', async () => {
+  const { diff3 } = await import('../src/diff.js');
+  let seed = 3;
+  const rnd = (n) => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n; };
+  const mutate = (xs) => xs.flatMap((x) => { const r = rnd(10); return r === 0 ? [] : r === 1 ? [x, 'n' + rnd(3)] : r === 2 ? ['m' + rnd(3)] : [x]; });
+  for (let i = 0; i < 1000; i++) {
+    const base = Array.from({ length: rnd(15) }, () => 'l' + rnd(5));
+    const ours = mutate(base), theirs = mutate(base);
+    const files = [ours, base, theirs];
+    const pos = [0, 0, 0];
+    for (const reg of diff3(ours, base, theirs)) {
+      assert.deepEqual(reg.start, pos);
+      if (reg.eq) for (let k = 0; k < reg.lens[0]; k++) assert.ok(ours[pos[0] + k] === base[pos[1] + k] && base[pos[1] + k] === theirs[pos[2] + k]);
+      else assert.ok(reg.lens.some((n) => n > 0));
+      reg.lens.forEach((n, s) => { pos[s] += n; });
+    }
+    assert.deepEqual(pos, files.map((f) => f.length));
+  }
+});

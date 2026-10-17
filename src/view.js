@@ -69,9 +69,10 @@ function drawHeader(app, scr, g) {
       if (app.output) scr.text(x + 1, 0, `→ ${app.output}`, bar, p.x + p.w - x - 2);
       continue;
     }
-    const f = app.m.files[p.side], sc = t.sides[p.side];
+    const f = app.m.files[p.side], sc = app.sideColors[p.side];
+    const role = app.m.three ? `${app.sideName(p.side)} \u00b7 ` : '';
     const saved = app.overwritten.has(p.side) ? 'saved over \u00b7 ' : '';
-    const info = `${saved}${f.lines.length} lines${f.eol === '\r\n' ? ' CRLF' : ''}${f.eofNewline || !f.lines.length ? '' : ' no-EOL'}`;
+    const info = `${role}${saved}${f.lines.length} lines${f.eol === '\r\n' ? ' CRLF' : ''}${f.eofNewline || !f.lines.length ? '' : ' no-EOL'}`;
     const count = changed[p.side] ? `${sc.sign}${changed[p.side]}` : '';
     const tail = strWidth(info) + (count ? count.length + 2 : 0) + 2;
     let label = f.label;
@@ -91,6 +92,7 @@ function sepStyle(app, seg) {
   const t = app.theme;
   if (seg.type === 'eq') return t.sep;
   if (seg.edit || app.editor?.h === seg) return t.sepEdited;
+  if (app.m.isAuto(seg)) return t.sepAuto;
   return app.m.isResolved(seg) ? t.sepResolved : t.sepUnresolved;
 }
 
@@ -128,7 +130,7 @@ function drawLineNo(scr, p, sy, n, st) {
 
 function drawSideCell(app, scr, p, sy, row, seg, info) {
   const t = app.theme, m = app.m, side = p.side;
-  const file = m.files[side], sc = t.sides[side];
+  const file = m.files[side], sc = app.sideColors[side];
   if (seg.type === 'eq') {
     const idx = seg.start[side] + row.off;
     drawLineNo(scr, p, sy, idx + 1, t.lineNo);
@@ -137,7 +139,7 @@ function drawSideCell(app, scr, p, sy, row, seg, info) {
   }
   const k = info.lines[side];
   const cur = seg.hunk === app.cur;
-  const numSt = cur && row.off === app.lineOff && !app.editor ? t.cursor : cur ? t.current : { fg: sc.num };
+  const numSt = cur && row.off === app.lineOff && !app.editor && k >= 0 ? t.cursor : cur ? t.current : { fg: sc.num };
   drawLineNo(scr, p, sy, k >= 0 ? seg.start[side] + k + 1 : 0, numSt);
   if (k < 0) {
     scr.fill(p.textX, sy, p.textW, 1, HATCH, style({ fg: sc.filler }));
@@ -148,11 +150,11 @@ function drawSideCell(app, scr, p, sy, row, seg, info) {
     }
     return;
   }
-  let { state, order } = m.lineState(seg, side, k);
+  let { state, order, quiet } = m.lineState(seg, side, k);
   // While editing, show the originals in full color for reference.
   if (state === 'edit' && app.editor?.h === seg) state = 'open';
   let base, word = null, mark = ' ', markSt = null, syn = null;
-  if (state === 'edit') {
+  if (state === 'edit' || state === 'same' || quiet) {
     base = t.eq; syn = app.syntax(side, true);
   } else if (state === 'open') {
     base = sc.line; word = sc.word; syn = app.syntax(side);
@@ -193,7 +195,8 @@ function drawBand(app, scr, g, sy, row, seg, b) {
 function drawMergedCell(app, scr, p, sy, row, seg) {
   const t = app.theme, m = app.m;
   if (seg.type === 'eq') {
-    drawText(app, scr, p.textX, sy, p.textW, m.files[1].lines[seg.start[1] + row.off], t.eq, null, null, { syn: app.syntax(1, true) });
+    const es = m.defaultEqSide;
+    drawText(app, scr, p.textX, sy, p.textW, m.files[es].lines[seg.start[es] + row.off], t.eq, null, null, { syn: app.syntax(es, true) });
     return;
   }
   const k = row.off;
@@ -218,7 +221,7 @@ function drawMergedCell(app, scr, p, sy, row, seg) {
     drawText(app, scr, p.textX, sy, p.textW, e.text, st, null, null, { syn: app.syntax(1) });
     return;
   }
-  const sc = t.sides[e.src];
+  const sc = app.sideColors[e.src];
   scr.put(p.markX, sy, BAR, style({ fg: sc.mark }));
   const ranges = m.words(seg)[e.src][e.line];
   drawText(app, scr, p.textX, sy, p.textW, e.text, sc.chosen, mix(sc.chosen, sc.chosenWord), ranges, { syn: app.syntax(e.src) });
@@ -291,7 +294,8 @@ function drawOverview(app, scr, g) {
           const st = k >= 0 ? m.lineState(seg, side, k).state : null;
           if (seg.hunk === app.cur) { p = 5; c = ov.current; }
           else if (info.band >= 0 || st === 'edit') { p = 3; c = ov.edited; }
-          else if (st === 'open') { p = 4; c = t.sides[side].ov; }
+          else if (st === 'open') { p = 4; c = app.sideColors[side].ov; }
+          else if (m.isAuto(seg)) { p = 2; c = st === 'take' ? ov.auto : ov.rejected; }
           else if (st === 'take') { p = 3; c = ov.resolved; }
           else if (st === 'drop') { p = 2; c = ov.rejected; }
           else { p = 1; c = ov.empty; }
@@ -319,13 +323,14 @@ function drawStatus(app, scr, g) {
     hints = [['Esc', 'done'], ['C-c', 'cancel'], ['C-l/C-r', 'reset to left/right']];
   } else {
     const st = app.m.stats();
-    badge('DIFF', t.accent);
+    badge(app.m.three ? 'MERGE' : 'DIFF', t.accent);
     if (!st.total) badge('identical', t.ok);
     else {
       text(`${app.cur + 1}/${st.total} `, t.barKey);
-      if (st.unresolved) badge(`${st.unresolved} unresolved`, t.warn);
+      if (st.unresolved) badge(`${st.unresolved} ${app.m.three ? 'to resolve' : 'unresolved'}`, t.warn);
       else badge('✓ all resolved', t.ok);
       if (st.edited) badge(`${EDIT_MARK} ${st.edited}`, t.edit);
+      if (app.m.three) text(`${st.conflicts} conflict${st.conflicts === 1 ? '' : 's'}, ${st.auto} auto-merged `, t.bar);
     }
     if (app.search) {
       const sr = app.search;
@@ -333,7 +338,9 @@ function drawStatus(app, scr, g) {
     }
     if (app.dirty) text('● modified ', { fg: t.danger, bg: t.bar.bg, bold: true });
     if (app.msg) text(` ${app.msg.text}`, { fg: app.msg.warn ? t.warn : t.modalTitle.fg, bg: t.bar.bg, bold: app.msg.warn });
-    hints = app.search ? [['n/p', 'next/prev match'], ['Esc', 'end search'], ['?', 'help']] : [['h/l', 'take'], ['H/L', 'line'], ['b', 'both'], ['x', 'neither'], ['e', 'edit'], ['n/p', 'hunk'], ['s', 'save'], ['?', 'help']];
+    hints = app.search ? [['n/p', 'next/prev match'], ['Esc', 'end search'], ['?', 'help']]
+      : app.m.three ? [['h/c/l', 'ours/base/theirs'], ['H/C/L', 'line'], ['b', 'both'], ['x', 'neither'], ['e', 'edit'], ['Tab', 'next'], ['s', 'save'], ['?', 'help']]
+      : [['h/l', 'take'], ['H/L', 'line'], ['b', 'both'], ['x', 'neither'], ['e', 'edit'], ['n/p', 'hunk'], ['s', 'save'], ['?', 'help']];
   }
   // Key hints on the right, as many as fit (help always stays).
   const widthOf = (hs) => hs.reduce((a, [k, d]) => a + k.length + d.length + 3, 0);

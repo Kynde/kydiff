@@ -92,3 +92,30 @@ test('per-row decisions', () => {
   m.undo();
   assert.deepEqual(h.rows, [[1], [1], []]);
 });
+
+test('three-way: automatic resolution, conflicts and diff3 markers', () => {
+  const m = new Merge([
+    file('a\nB\nc\nX\ne\n', 'ours'),
+    file('a\nb\nc\nd\ne\n', 'base'),
+    file('a\nb\nc\nY\ne\nf\n', 'theirs'),
+  ]);
+  assert.ok(m.three);
+  const [h1, h2, h3] = m.hunks;
+  assert.deepEqual(h1.sel, [0], 'only ours changed b');
+  assert.equal(h2.conflict, true, 'both changed d');
+  assert.deepEqual(h3.sel, [2], 'only theirs added f');
+  assert.deepEqual(m.stats(), { total: 3, unresolved: 1, edited: 0, auto: 2, conflicts: 1 });
+  assert.deepEqual(m.output(), ['a', 'B', 'c', '<<<<<<< ours', 'X', '||||||| base', 'd', '=======', 'Y', '>>>>>>> theirs', 'e', 'f']);
+  assert.equal(m.lineState(h1, 1, 0).state, 'drop');
+  m.apply([{ h: h2, sel: [2, 0] }]);
+  assert.deepEqual(m.resolved(h2), ['Y', 'X']);
+  assert.equal(m.version, 1, 'automatic resolution is not an edit');
+});
+
+test('three-way: unchanged side shows as same, not dropped', () => {
+  const m = new Merge([file('x\n', 'o'), file('x\n', 'b'), file('y\n', 't')]);
+  const [h] = m.hunks;
+  assert.deepEqual(h.sel, [2]);
+  assert.equal(m.lineState(h, 0, 0).state, 'same');
+  assert.equal(m.lineState(h, 1, 0).state, 'drop');
+});

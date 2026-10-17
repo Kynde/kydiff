@@ -49,7 +49,11 @@ export class App {
     this.rows = null;
     if (this.search) this.setSearch(this.search.query, model);
     this.highlighters = model.files.map((f) => highlighter(f.label + ' ' + f.path));
-    this.changed = model.files.map((_, side) => model.hunks.reduce((n, h) => n + h.lens[side], 0));
+    // Changed-line counts for the header; three-way, what each side changed
+    // relative to the base.
+    this.changed = model.files.map((_, side) => model.hunks.reduce((n, h) =>
+      n + (!model.three || h.changed[side] ? h.lens[side] : 0), 0));
+    if (model.three) this.changed[model.base] = 0;
     this.buildRows();
     if (this.m.hunks.length) this.reveal(this.m.hunks[0]);
   }
@@ -78,6 +82,16 @@ export class App {
   }
 
   changedCounts() { return this.changed; }
+
+  get sideColors() { return this.m.three ? this.theme.sides3 : this.theme.sides; }
+
+  // Display names for the sides, for messages.
+  sideName(side) {
+    if (this.m.three) return ['ours', 'base', 'theirs'][side];
+    return side === 0 ? 'left' : 'right';
+  }
+
+  bothSel() { return this.m.outer; }
 
   get dirty() { return this.m.version !== this.savedVersion; }
   get bodyH() { return Math.max(1, this.term.rows - 2); }
@@ -127,14 +141,14 @@ export class App {
     const P = h.height;
     if (this.editor?.h === h) return { kind: 'edited', P, band: this.editor.buf.lines.length };
     if (h.edit) return { kind: 'edited', P, band: Math.max(1, h.edit.length) };
-    if (!h.rows && h.sel?.length === 2) return { kind: 'stacked', P, first: h.sel[0], second: h.sel[1] };
+    if (!h.rows && h.sel?.length > 1) return { kind: 'stacked', P, order: h.sel };
     return { kind: 'positional', P };
   }
 
   contentHeight(h) {
     const l = this.layout(h);
     if (l.kind === 'edited') return l.P + l.band;
-    if (l.kind === 'stacked') return h.lens[l.first] + h.lens[l.second];
+    if (l.kind === 'stacked') return l.order.reduce((n, side) => n + h.lens[side], 0);
     return l.P;
   }
 
@@ -145,9 +159,11 @@ export class App {
     const lines = h.lens.map(() => -1);
     let band = -1;
     if (l.kind === 'stacked') {
-      const n1 = h.lens[l.first];
-      if (off < n1) lines[l.first] = off;
-      else if (off - n1 < h.lens[l.second]) lines[l.second] = off - n1;
+      let o = off;
+      for (const side of l.order) {
+        if (o < h.lens[side]) { lines[side] = o; break; }
+        o -= h.lens[side];
+      }
     } else if (off < l.P) {
       h.lens.forEach((n, side) => { if (off < n) lines[side] = off; });
     } else if (l.kind === 'edited' && off - l.P < l.band) band = off - l.P;
@@ -262,20 +278,25 @@ export class App {
     scrollLeft: () => { this.hs = Math.max(0, this.hs - 8); },
     scrollHome: () => { this.hs = 0; },
     selectLeft: () => this.choose([0]),
-    selectRight: () => this.choose([1]),
+    selectRight: () => this.choose([this.m.last]),
+    selectBase: () => (this.m.three ? this.choose([this.m.base]) : this.flash('there is no base in a 2-way diff')),
+    select1: () => this.choose([0]),
+    select2: () => this.choose([1]),
+    select3: () => (this.m.three ? this.choose([2]) : this.flash('there are only two panes')),
     selectBoth: () => {
-      const h = this.hunk;
-      if (h) this.choose(!h.edit && !h.rows && same(h.sel, [0, 1]) ? [1, 0] : [0, 1]);
+      const h = this.hunk, both = this.bothSel();
+      if (h) this.choose(!h.edit && !h.rows && same(h.sel, both) ? [...both].reverse() : both);
     },
     selectNeither: () => this.choose([]),
     unselect: () => this.choose(null),
     selectLineLeft: () => this.chooseLine([0]),
-    selectLineRight: () => this.chooseLine([1]),
+    selectLineRight: () => this.chooseLine([this.m.last]),
+    selectLineBase: () => (this.m.three ? this.chooseLine([this.m.base]) : this.flash('there is no base in a 2-way diff')),
     selectLineBoth: () => this.chooseLine('both'),
     selectLineNeither: () => this.chooseLine([]),
     unselectLine: () => this.chooseLine(null),
     selectAllLeft: () => this.chooseAll([0]),
-    selectAllRight: () => this.chooseAll([1]),
+    selectAllRight: () => this.chooseAll([this.m.last]),
     edit: () => this.startEdit(),
     editExternal: () => this.editExternal(),
     undo: () => this.undoRedo('undo'),
@@ -360,7 +381,8 @@ export class App {
     if (info.band >= 0) return this.flash('that is the edited text; e edits it', true);
     const k = info.lines.find((x) => x >= 0);
     if (k === undefined) return;
-    if (sel === 'both') sel = same(this.m.rowSel(h, k), [0, 1]) && !h.edit ? [1, 0] : [0, 1];
+    const both = this.bothSel();
+    if (sel === 'both') sel = same(this.m.rowSel(h, k), both) && !h.edit ? [...both].reverse() : both;
     this.m.applyRow(h, k, sel);
     this.buildRows();
     // Keep the cursor on the same line even if the layout changed.
@@ -372,7 +394,7 @@ export class App {
     if (!changes.length) return this.flash('nothing unresolved');
     this.m.apply(changes);
     this.buildRows();
-    this.flash(`took ${sel[0] === 0 ? 'left' : 'right'} for ${changes.length} differences`);
+    this.flash(`took ${this.sideName(sel[0])} for ${changes.length} differences`);
   }
 
   undoRedo(which) {
@@ -492,7 +514,7 @@ export class App {
       case 'C-k': b.killEnd(); break;
       case 'C-u': b.killStart(); break;
       case 'C-l': b.set(this.m.lines(ed.h, 0)); break;
-      case 'C-r': b.set(this.m.lines(ed.h, 1)); break;
+      case 'C-r': b.set(this.m.lines(ed.h, this.m.last)); break;
       case 'enter': b.insert('\n'); break;
       case 'backspace': b.backspace(); break;
       case 'delete': case 'C-d': b.del(); break;
@@ -520,7 +542,7 @@ export class App {
   // filled in as left then right.
   editText(h) {
     return this.m.tagged(h).flatMap((e) => e.open
-      ? [0, 1].flatMap((side) => this.m.lines(h, side).slice(e.open[0], e.open[1]))
+      ? this.m.outer.flatMap((side) => this.m.lines(h, side).slice(e.open[0], e.open[1]))
       : [e.text]);
   }
 
@@ -695,21 +717,22 @@ export class App {
   // ---- saving and quitting -----------------------------------------------
 
   save(then = null) {
-    const [a, b] = this.m.files;
+    const m = this.m;
+    const [l, r] = m.outer;
     const opts = [];
     if (this.output) opts.push(['o', `output  ${this.output}`, () => this.saveTo(this.output, null, then)]);
-    if (a.path !== '-') opts.push(['l', `left    ${a.path}`, () => this.saveTo(a.path, 0, then)]);
-    if (b.path !== '-') opts.push(['r', `right   ${b.path}`, () => this.saveTo(b.path, 1, then)]);
-    opts.push(['a', 'save as…', () => this.promptPath(then)]);
-    const { unresolved } = this.m.stats();
+    if (m.files[l].path !== '-') opts.push(['l', `${this.sideName(l).padEnd(6)}  ${m.files[l].path}`, () => this.saveTo(m.files[l].path, l, then)]);
+    if (m.files[r].path !== '-') opts.push(['r', `${this.sideName(r).padEnd(6)}  ${m.files[r].path}`, () => this.saveTo(m.files[r].path, r, then)]);
+    opts.push(['a', 'save as\u2026', () => this.promptPath(then)]);
+    const { unresolved } = m.stats();
     const intro = unresolved
-      ? [`${unresolved} difference${unresolved > 1 ? 's are' : ' is'} unresolved. Saving over the left or`, 'right file keeps that file\'s version of them.']
+      ? [`${unresolved} difference${unresolved > 1 ? 's are' : ' is'} unresolved. Saving over one of the`, 'inputs keeps that file\'s version of them.']
       : [];
     this.choice('Save the merged result to', intro, opts);
   }
 
   promptPath(then) {
-    const b = new Buffer([this.output || this.m.files[1].path], { multiline: false });
+    const b = new Buffer([this.output || this.m.files[this.m.outer[1]].path], { multiline: false });
     b.end();
     this.modal = {
       title: 'Save as', lines: [[['Path to write the merged result to:', 'modalDim']]], input: b,
@@ -720,16 +743,20 @@ export class App {
   // side: the input file being overwritten (its version wins for unresolved
   // hunks and its formatting is kept), or null for any other path.
   saveTo(file, side, then) {
-    const { unresolved } = this.m.stats();
+    const m = this.m;
+    const { unresolved } = m.stats();
+    const fmt = side ?? m.defaultEqSide;
     if (side === null && unresolved) {
-      const go = (policy) => () => this.write(file, policy, 1, then);
+      const go = (policy) => () => this.write(file, policy, fmt, then);
+      const [l, r] = m.outer;
       return this.choice(`${unresolved} unresolved difference${unresolved > 1 ? 's' : ''}`, ['How should they be written?'], [
-        ['m', 'with conflict markers', go('markers'), '<<<<<<< / ======= / >>>>>>>'],
-        ['l', 'take left', go(0)],
-        ['r', 'take right', go(1)],
+        ['m', 'with conflict markers', go('markers'), m.three ? '<<<<<<< / ||||||| / ======= / >>>>>>>' : '<<<<<<< / ======= / >>>>>>>'],
+        ['l', `take ${this.sideName(l)}`, go(l)],
+        ...(m.three ? [['c', 'take base', go(m.base)]] : []),
+        ['r', `take ${this.sideName(r)}`, go(r)],
       ]);
     }
-    this.write(file, side ?? 1, side ?? 1, then);
+    this.write(file, side ?? 'markers', fmt, then);
   }
 
   write(file, unresolved, fmtSide, then, force = false) {

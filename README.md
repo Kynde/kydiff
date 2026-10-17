@@ -8,6 +8,7 @@ glance. Plain JavaScript with no dependencies, needs Node 20+.
 kdiff old.js new.js              # compare, merge into either file, save
 kdiff -o merged.js a.js b.js     # with a default output file
 git show HEAD~3:f.c | kdiff - f.c
+kdiff ours.c base.c theirs.c -o merged.c   # 3-way merge
 ```
 
 ## How it works
@@ -35,6 +36,23 @@ right, merging, and writing the result over whichever file you want. When you
 save over one of the inputs, hunks you left unresolved keep that file's version.
 For any other path you choose between conflict markers, left or right.
 
+## Three-way merging
+
+With three files the layout is ours | base | theirs, with the base in the
+middle. Git's conflict markers show only the two results; here you see the
+change each side made to the base:
+
+- Inside a difference, only the lines a side actually changed are colored
+  (ours cyan, theirs green, and red for the base lines they replaced). Lines a
+  side kept from the base are dimmed, so the two competing *operations* stand
+  out.
+- Differences only one side made, or both made identically, are merged
+  automatically. They show as resolved (dim blue in the overview) and can
+  still be changed. `Tab` jumps between the real conflicts.
+- `h`/`l` take ours/theirs, `c` takes the base, `b` takes ours then theirs
+  (again for theirs then ours), Shift does the same for one line, and `e`
+  edits. Unresolved conflicts are written with diff3-style markers.
+
 The column on the far right is an overview of the whole file: one strip per
 side, red and green for open differences, blue for resolved ones, amber for the
 current one, with the visible region lit up. Click or drag it to jump.
@@ -48,11 +66,15 @@ current one, with the visible region lit up. Click or drag it to jump.
 | `n` `p` | next / previous difference |
 | `j` `k` / `↓` `↑` | move the line cursor (crosses into the next difference) |
 | `Tab` `S-Tab` | next / previous unresolved |
-| `h` `l` / `←` `→` | take left / right |
+| `h` `l` / `←` `→` | take left / right (ours / theirs) |
+| `c` | 3-way: take the base |
+| `1` `2` `3` | take the 1st / 2nd / 3rd pane |
 | `b` | take both, again to swap order |
 | `x` | take neither |
 | `-` | back to unresolved |
-| `H` `L` `B` `X` / `S-←` `S-→` | the same, for the line under the cursor only |
+| `H` `L` `C` `B` `X` / `S-←` `S-→` | the same, for the line under the cursor only |
+| `/` | search; `n` `p` then go through the matches, `Esc` ends it |
+| `R` | reload the files from disk |
 | `M-h` `M-l` | take left / right for all unresolved |
 | `e` | edit the result in place (`Esc` done, `C-c` cancel) |
 | `E` | edit the result in `$EDITOR` |
@@ -94,20 +116,24 @@ git config --global difftool.prompt false
 git difftool -t kdiff HEAD~1
 ```
 
-kdiff exits with status 1 if `-o` was given but nothing was saved, which is what
-`git mergetool` expects. Mergetool support arrives with 3-way mode.
+```sh
+git config --global mergetool.kdiff.cmd 'kdiff -L "$MERGED (ours)" -L "$MERGED (base)" -L "$MERGED (theirs)" "$LOCAL" "$BASE" "$REMOTE" -o "$MERGED"'
+git config --global mergetool.kdiff.trustExitCode true
+git mergetool -t kdiff
+```
+
+kdiff exits with status 1 if `-o` was given but nothing was saved, so git
+knows the file wasn't merged.
 
 ## Roadmap
 
-- **3-way merge with the base in the middle.** Git's conflict markers show only
-  the two results, not what each branch *did*. With base | ours | theirs side
-  by side, each side's change shows as a diff against the base. Hunks only one
-  side touched resolve themselves, and real conflicts show both operations. The
-  model is already indexed by side for this.
 - Reading a file with diff3/zdiff3 conflict markers directly, so a conflicted
   file can be resolved without git's help.
-- `git mergetool` integration (`kdiff "$LOCAL" "$BASE" "$REMOTE" -o "$MERGED"`).
-- Search, editing identical regions, character-level alignment for moved text.
+- `kdiff --git [paths]`: read the conflicted versions straight from git's
+  index, without going through mergetool.
+- Better alignment when one side inserts code next to a line the other side
+  changed (prefer pairing similar lines).
+- Editing identical regions, character-level alignment for moved text.
 - A port to C or Rust once the design settles.
 
 ## Development

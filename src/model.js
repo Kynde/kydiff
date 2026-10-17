@@ -8,10 +8,13 @@
 //                      side the way the panes align them (overrides sel)
 //   edit = [lines]     hand-edited result (overrides both)
 //
-// Everything is indexed by side so the same model can carry a third file.
+// Everything is indexed by side. Two-way merges have sides left, right;
+// three-way merges have ours, base, theirs, with the base in the middle.
+// There, a hunk that only one side changed (or both changed the same way) is
+// resolved automatically; the rest are conflicts.
 
 import fs from 'node:fs';
-import { diffLines, wordDiff } from './diff.js';
+import { diffLines, diff3, matchLines, wordDiff, normalizer } from './diff.js';
 
 export function parseText(text) {
   let bom = false;
@@ -41,28 +44,71 @@ export function serialize(file, lines) {
 
 export class Merge {
   constructor(files, opts = {}) {
-    if (files.length !== 2) throw new Error('only 2-way merges are supported so far');
+    if (files.length !== 2 && files.length !== 3) throw new Error('need 2 or 3 files');
     this.files = files;
+    this.three = files.length === 3;
+    this.base = this.three ? 1 : -1;
+    this.outer = this.three ? [0, 2] : [0, 1];
+    this.norm = normalizer(opts);
     this.segments = [];
     this.hunks = [];
     this.undoStack = [];
     this.redoStack = [];
     this.version = 0;
     this.wordCache = new Map();
-    const [a, b] = files;
-    for (const op of diffLines(a.lines, b.lines, opts)) {
-      const seg = op.eq
-        ? { type: 'eq', start: [op.a0, op.b0], len: op.a1 - op.a0 }
-        : { type: 'hunk', start: [op.a0, op.b0], lens: [op.a1 - op.a0, op.b1 - op.b0], sel: null, rows: null, edit: null };
+    // Three-way: which lines each side kept from the base. Inside a conflict
+    // only the lines a side actually changed are its operation.
+    this.kept = null;
+    if (this.three) {
+      const [o, b, t] = files.map((f) => f.lines);
+      const mo = matchLines(b, o, opts), mt = matchLines(b, t, opts);
+      this.kept = [new Uint8Array(o.length), new Uint8Array(b.length), new Uint8Array(t.length)];
+      mo.forEach((j, i) => { if (j >= 0) this.kept[0][j] = 1; });
+      mt.forEach((j, i) => { if (j >= 0) this.kept[2][j] = 1; });
+      for (let i = 0; i < b.length; i++) this.kept[1][i] = mo[i] >= 0 && mt[i] >= 0 ? 1 : 0;
+      this.matches = [mo, mt];
+    }
+    const regions = this.three
+      ? diff3(files[0].lines, files[1].lines, files[2].lines, opts, ...this.matches)
+      : diffLines(files[0].lines, files[1].lines, opts).map((op) => ({ eq: op.eq, start: [op.a0, op.b0], lens: [op.a1 - op.a0, op.b1 - op.b0] }));
+    for (const r of regions) {
+      const seg = r.eq
+        ? { type: 'eq', start: r.start, len: r.lens[0] }
+        : { type: 'hunk', start: r.start, lens: r.lens, sel: null, rows: null, edit: null };
       seg.index = this.segments.length;
       this.segments.push(seg);
       if (seg.type === 'hunk') {
         seg.hunk = this.hunks.length;
         seg.height = Math.max(...seg.lens);
+        if (this.three) this.#autoResolve(seg);
         this.hunks.push(seg);
       }
     }
   }
+
+  // Three-way: take the side that changed when the other didn't, or either
+  // when both made the same change. Not an undoable step; it's the start.
+  #autoResolve(h) {
+    const same = (x, y) => this.#sameLines(h, x, y);
+    const [o, b, t] = [0, 1, 2];
+    h.changed = [!same(o, b), false, !same(t, b)];
+    if (!h.changed[o]) h.sel = [t];
+    else if (!h.changed[t] || same(o, t)) h.sel = [o];
+    h.conflict = !h.sel;
+    h.auto = h.sel;
+  }
+
+  #sameLines(h, x, y) {
+    if (h.lens[x] !== h.lens[y]) return false;
+    for (let k = 0; k < h.lens[x]; k++) if (this.norm(this.line(h, x, k)) !== this.norm(this.line(h, y, k))) return false;
+    return true;
+  }
+
+  get defaultEqSide() { return this.three ? 0 : 1; }
+  get last() { return this.files.length - 1; }
+
+  // Untouched automatic resolutions.
+  isAuto(h) { return !!h.auto && h.sel === h.auto && !h.rows && !h.edit; }
 
   get sides() { return this.files.length; }
 
@@ -78,12 +124,20 @@ export class Merge {
 
   // How line k of a side fares: { state: 'open'|'take'|'drop'|'edit', order }
   // where order is 1, 2.. when several sides are taken, else 0.
+  // 'same' is a line not taken whose text is in the result anyway (an equal
+  // line of a taken side), or, three-way, a side line equal to the base: it
+  // isn't lost, so it shouldn't look struck out.
+  // An 'open' line is quiet when, three-way, it isn't part of any change:
+  // a side line kept from the base, or a base line both sides kept.
   lineState(h, side, k) {
     if (h.edit) return { state: 'edit', order: 0 };
     const s = this.rowSel(h, k);
-    if (!s) return { state: 'open', order: 0 };
-    if (!s.includes(side)) return { state: 'drop', order: 0 };
-    return { state: 'take', order: s.length > 1 ? s.indexOf(side) + 1 : 0 };
+    if (!s) return { state: 'open', order: 0, quiet: !!this.kept?.[side][h.start[side] + k] };
+    if (s.includes(side)) return { state: 'take', order: s.length > 1 ? s.indexOf(side) + 1 : 0 };
+    const text = this.norm(this.line(h, side, k));
+    const eq = (o) => k < h.lens[o] && this.norm(this.line(h, o, k)) === text;
+    if (s.some(eq) || (this.three && side !== this.base && eq(this.base))) return { state: 'same', order: 0 };
+    return { state: 'drop', order: 0 };
   }
 
   // The result lines of a hunk tagged with their origin, { text, src, line }
@@ -116,12 +170,14 @@ export class Merge {
   resolvedTagged(h) { return this.isResolved(h) ? this.tagged(h) : null; }
 
   stats() {
-    let unresolved = 0, edited = 0;
+    let unresolved = 0, edited = 0, auto = 0, conflicts = 0;
     for (const h of this.hunks) {
       if (h.edit) edited++;
       else if (!this.isResolved(h)) unresolved++;
+      if (this.isAuto(h)) auto++;
+      if (h.conflict) conflicts++;
     }
-    return { total: this.hunks.length, unresolved, edited };
+    return { total: this.hunks.length, unresolved, edited, auto, conflicts };
   }
 
   // Apply decisions as one undoable step: changes = [{ h, sel, rows, edit }].
@@ -163,17 +219,25 @@ export class Merge {
 
   // Intra-line highlight ranges for a hunk: ranges[side][k] for line k,
   // pairing lines positionally the way side-by-side GitHub diffs do.
+  // Three-way, each side is compared with the base, and the base shows what
+  // either side changed in it.
   words(h) {
     let w = this.wordCache.get(h);
-    if (!w) {
-      const a = this.lines(h, 0), b = this.lines(h, 1);
-      w = [[], []];
-      for (let k = 0; k < Math.min(a.length, b.length); k++) {
-        const r = wordDiff(a[k], b[k]);
-        if (r) { w[0][k] = r[0]; w[1][k] = r[1]; }
+    if (w) return w;
+    w = this.files.map(() => []);
+    const pair = (x, y, intoY) => {
+      for (let k = 0; k < Math.min(h.lens[x], h.lens[y]); k++) {
+        const r = wordDiff(this.line(h, x, k), this.line(h, y, k));
+        if (!r) continue;
+        w[x][k] = r[0];
+        w[y][k] = intoY && w[y][k] ? unionRanges(w[y][k], r[1]) : r[1];
       }
-      this.wordCache.set(h, w);
-    }
+    };
+    if (this.three) {
+      if (h.changed[0]) pair(0, 1, true);
+      if (h.changed[2]) pair(2, 1, true);
+    } else pair(0, 1, false);
+    this.wordCache.set(h, w);
     return w;
   }
 
@@ -181,21 +245,35 @@ export class Merge {
   //   eqSide:     which side's text to use for equal segments (they can differ
   //               when whitespace is ignored)
   //   unresolved: a side index to fall back on, or 'markers'
-  output({ eqSide = 1, unresolved = 'markers' } = {}) {
+  output({ eqSide = this.defaultEqSide, unresolved = 'markers' } = {}) {
     const out = [];
     const range = (h, side, [k0, k1]) => this.lines(h, side).slice(k0, k1);
+    const [l, r] = this.outer;
     for (const seg of this.segments) {
       if (seg.type === 'eq') { out.push(...this.lines(seg, eqSide)); continue; }
       for (const t of this.tagged(seg)) {
         if (!t.open) out.push(t.text);
         else if (unresolved === 'markers') {
-          out.push(`<<<<<<< ${this.files[0].label}`, ...range(seg, 0, t.open),
-            '=======', ...range(seg, 1, t.open), `>>>>>>> ${this.files[1].label}`);
+          // diff3-style markers when there is a base.
+          out.push(`<<<<<<< ${this.files[l].label}`, ...range(seg, l, t.open));
+          if (this.three) out.push(`||||||| ${this.files[1].label}`, ...range(seg, 1, t.open));
+          out.push('=======', ...range(seg, r, t.open), `>>>>>>> ${this.files[r].label}`);
         } else out.push(...range(seg, unresolved, t.open));
       }
     }
     return out;
   }
+}
+
+function unionRanges(a, b) {
+  const all = [...a, ...b].sort((x, y) => x[0] - y[0]);
+  const out = [];
+  for (const [s, e] of all) {
+    const last = out[out.length - 1];
+    if (last && s <= last[1]) last[1] = Math.max(last[1], e);
+    else out.push([s, e]);
+  }
+  return out;
 }
 
 function same(x, y) {

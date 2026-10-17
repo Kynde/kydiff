@@ -7,11 +7,16 @@ import { Terminal } from '../src/term.js';
 import { App } from '../src/app.js';
 
 const USAGE = `usage: kdiff [options] LEFT RIGHT
+       kdiff [options] OURS BASE THEIRS
 
 Compare two files side by side and merge them by picking, per difference,
 the left side, the right side, both, or neither, or by editing the result.
-Save the result over either input or to another file. Either file can be
-"-" to read it from stdin.
+Save the result over either input or to another file. One file can be "-"
+to read it from stdin.
+
+With three files, the base goes in the middle and each side is shown as a
+change to it. Changes only one side made are merged automatically; the
+conflicts are left to you.
 
 options:
   -o, --output FILE      where the merged result goes by default
@@ -28,7 +33,9 @@ config: ${configPath()}
 
 git:
   git config --global difftool.kdiff.cmd 'kdiff -L "$MERGED (old)" -L "$MERGED (new)" "$LOCAL" "$REMOTE"'
-  git difftool -t kdiff`;
+  git config --global mergetool.kdiff.cmd 'kdiff -L "$MERGED (ours)" -L "$MERGED (base)" -L "$MERGED (theirs)" "$LOCAL" "$BASE" "$REMOTE" -o "$MERGED"'
+  git config --global mergetool.kdiff.trustExitCode true
+  git difftool -t kdiff / git mergetool -t kdiff`;
 
 function parseArgs(argv) {
   const o = { files: [], labels: [], output: null, diff: {}, cfg: {} };
@@ -62,8 +69,7 @@ function die(msg) {
 }
 
 const opts = parseArgs(process.argv.slice(2));
-if (opts.files.length === 3) die('3-way merging is not implemented yet');
-if (opts.files.length !== 2) die(`need two files to compare\n\n${USAGE}`);
+if (opts.files.length !== 2 && opts.files.length !== 3) die(`need two or three files\n\n${USAGE}`);
 if (opts.files.filter((f) => f === '-').length > 1) die('only one file can come from stdin');
 
 // stdin can only be read once; a reload keeps what was read.

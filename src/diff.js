@@ -188,3 +188,40 @@ function addRange(ranges, str, s, e) {
   if (last && /^\s*$/.test(str.slice(last[1], s))) last[1] = e;
   else ranges.push([s, e]);
 }
+
+// Three-way alignment in the manner of diff3: diff the base against each
+// side and split everything into regions that are either unchanged in all
+// three or a "chunk" where at least one side differs from the base.
+// Returns [{ eq, start: [o, b, t], lens: [no, nb, nt] }] for ours, base,
+// theirs.
+// For each line of base, the index of the line it matches in side, or -1.
+export function matchLines(base, side, opts = {}) {
+  const m = new Int32Array(base.length).fill(-1);
+  for (const op of diffLines(base, side, opts)) {
+    if (op.eq) for (let k = 0; k < op.a1 - op.a0; k++) m[op.a0 + k] = op.b0 + k;
+  }
+  return m;
+}
+
+export function diff3(ours, base, theirs, opts = {}, mo = matchLines(base, ours, opts), mt = matchLines(base, theirs, opts)) {
+  const out = [];
+  let o = 0, b = 0, t = 0;
+  while (b < base.length || o < ours.length || t < theirs.length) {
+    // Stable: the base line sits at the current position in both sides.
+    let n = 0;
+    while (b + n < base.length && mo[b + n] === o + n && mt[b + n] === t + n) n++;
+    if (n) {
+      out.push({ eq: true, start: [o, b, t], lens: [n, n, n] });
+      o += n; b += n; t += n;
+      continue;
+    }
+    // Unstable: runs to the next base line that both sides kept.
+    let e = b;
+    while (e < base.length && (mo[e] < 0 || mt[e] < 0)) e++;
+    const oe = e < base.length ? mo[e] : ours.length;
+    const te = e < base.length ? mt[e] : theirs.length;
+    out.push({ eq: false, start: [o, b, t], lens: [oe - o, e - b, te - t] });
+    o = oe; b = e; t = te;
+  }
+  return out;
+}
