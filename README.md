@@ -145,6 +145,9 @@ knows the file wasn't merged.
 
 ## Roadmap
 
+The original brief and the plan as agreed are kept in [docs/plan.md](docs/plan.md).
+
+
 - Better alignment when one side inserts code next to a line the other side
   changed (prefer pairing similar lines).
 - Editing identical regions, character-level alignment for moved text.
