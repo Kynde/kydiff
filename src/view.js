@@ -324,6 +324,7 @@ function drawStatus(app, scr, g) {
   } else {
     const st = app.m.stats();
     badge(app.m.three ? 'MERGE' : 'DIFF', t.accent);
+    if (app.queue) text(`file ${app.queue.index}/${app.queue.total}  `, t.barKey);
     if (!st.total) badge('identical', t.ok);
     else {
       text(`${app.cur + 1}/${st.total} `, t.barKey);

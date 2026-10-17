@@ -9,6 +9,7 @@ kdiff old.js new.js              # compare, merge into either file, save
 kdiff -o merged.js a.js b.js     # with a default output file
 git show HEAD~3:f.c | kdiff - f.c
 kdiff ours.c base.c theirs.c -o merged.c   # 3-way merge
+kdiff --git                      # resolve the conflicts of a merge/rebase
 ```
 
 ## How it works
@@ -110,6 +111,15 @@ action's defaults. `colors` is merged over the chosen theme (`dark` or
 
 ## git
 
+During a merge, rebase or cherry-pick with conflicts, `kdiff --git` goes
+through the conflicted files one at a time, or just the paths you name. It
+reads ours, base and theirs from git's index, saves to the working tree file,
+and runs `git add` on it once no conflict markers are left (unless you pass
+`--no-stage`). Quitting moves on to the next file and `Q` stops. It exits with
+status 0 only if every file got resolved.
+
+It also works as a regular difftool and mergetool:
+
 ```sh
 git config --global difftool.kdiff.cmd 'kdiff -L "$MERGED (old)" -L "$MERGED (new)" "$LOCAL" "$REMOTE"'
 git config --global difftool.prompt false
@@ -129,8 +139,6 @@ knows the file wasn't merged.
 
 - Reading a file with diff3/zdiff3 conflict markers directly, so a conflicted
   file can be resolved without git's help.
-- `kdiff --git [paths]`: read the conflicted versions straight from git's
-  index, without going through mergetool.
 - Better alignment when one side inserts code next to a line the other side
   changed (prefer pairing similar lines).
 - Editing identical regions, character-level alignment for moved text.

@@ -16,9 +16,15 @@ const same = (a, b) => a === b || (!!a && !!b && a.length === b.length && a.ever
 export class App {
   // load(prev) builds the model from the files on disk; prev is the current
   // model, for inputs that can't be read again (stdin).
-  constructor({ model, cfg, term, output = null, load = null }) {
+  // onExit(code, abort) replaces exiting the process; afterSave(file, clean)
+  // runs after each save, clean meaning no conflict markers were written.
+  // queue: { index, total } when working through several files.
+  constructor({ model, cfg, term, output = null, load = null, onExit = null, afterSave = null, queue = null }) {
     this.cfg = cfg;
     this.load = load;
+    this.onExit = onExit;
+    this.afterSave = afterSave;
+    this.queue = queue;
     this.theme = cfg.themeColors;
     this.term = term;
     this.output = output;
@@ -48,7 +54,7 @@ export class App {
     this.overwritten = new Set(); // sides whose file we saved over
     this.rows = null;
     if (this.search) this.setSearch(this.search.query, model);
-    this.highlighters = model.files.map((f) => highlighter(f.label + ' ' + f.path));
+    this.highlighters = model.files.map((f) => highlighter(f.name || (f.path === '-' ? f.label : f.path)));
     // Changed-line counts for the header; three-way, what each side changed
     // relative to the base.
     this.changed = model.files.map((_, side) => model.hunks.reduce((n, h) =>
@@ -312,7 +318,7 @@ export class App {
     prevMatch: () => this.gotoMatch(-1),
     save: () => this.save(),
     quit: () => this.quit(),
-    forceQuit: () => this.exit(),
+    forceQuit: () => this.exit(true),
   };
 
   gotoHunk(i) {
@@ -783,21 +789,34 @@ export class App {
     this.savedVersion = this.m.version;
     this.saved = true;
     this.flash(`wrote ${lines.length} lines to ${file}${loaded ? ' \u2014 R reloads and re-diffs' : ''}`);
+    const clean = unresolved !== 'markers' || !this.m.stats().unresolved;
+    if (this.afterSave) {
+      try {
+        const note = this.afterSave(file, clean);
+        if (note) this.flash(`wrote ${lines.length} lines to ${file}; ${note}`);
+      } catch (e) {
+        this.flash(`saved, but ${e.message}`, true);
+      }
+    }
     if (then) then();
   }
 
   quit() {
-    if (!this.dirty) return this.exit();
-    this.choice('Unsaved changes', ['The merge has changes that are not saved.'], [
+    const unsavedOutput = this.output && !this.saved;
+    if (!this.dirty && !unsavedOutput) return this.exit();
+    this.choice('Unsaved changes', [unsavedOutput ? `The merge has not been saved to ${this.output}.` : 'The merge has changes that are not saved.'], [
       ['s', 'save, then quit', () => this.save(() => this.exit())],
       ['y', 'quit without saving', () => this.exit()],
     ]);
   }
 
-  exit() {
-    this.term.stop();
+  // abort: stop altogether, also when there are more files queued.
+  exit(abort = false) {
     // Signal "not merged" to callers like git mergetool when an output file
     // was requested but never written.
-    process.exit(this.output && !this.saved ? 1 : 0);
+    const code = this.output && !this.saved ? 1 : 0;
+    if (this.onExit) return this.onExit(code, abort);
+    this.term.stop();
+    process.exit(code);
   }
 }
