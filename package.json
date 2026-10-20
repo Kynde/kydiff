@@ -1,6 +1,6 @@
 {
   "name": "kydiff",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Side-by-side terminal diff and merge tool in the spirit of xxdiff",
   "type": "module",
   "bin": { "kydiff": "bin/kydiff.js" },
