@@ -17,6 +17,9 @@ kydiff -o merged.js a.js b.js     # with a default output file
 git show HEAD~3:f.c | kydiff - f.c
 kydiff ours.c base.c theirs.c -o merged.c   # 3-way merge
 kydiff --git                      # resolve the conflicts of a merge/rebase
+kydiff                            # in a repo: git diff, file by file
+kydiff --cached                   # git diff --cached
+kydiff --diff main -- src/        # any git diff revisions and paths
 kydiff conflicted.c               # a file with conflict markers
 ```
 
@@ -133,6 +136,20 @@ from the conflict markers and saves back to the file. Only diff3/zdiff3-style
 markers record the base, so it's worth setting
 `git config --global merge.conflictStyle zdiff3`. Without it, a conflict's
 base shows up empty.
+
+### Viewing git diff
+
+`kydiff --diff` shows what `git diff` would, one file at a time, and takes
+the same revisions and paths: nothing for the index against the working
+tree, `--cached` (or `--staged`) for HEAD against the index, `REV` for a
+revision against the working tree, `A B` or `A..B` for two revisions.
+Running `kydiff` without any files inside a repository does the same as
+`--diff`. Quitting moves on to the next file and `Q` stops. Binary files and
+submodules are skipped, renames are followed.
+
+The working tree side is the real file, so you can take the left side for a
+hunk and save over it to revert just that change. The index and revision
+sides can only be saved elsewhere for now.
 
 It also works as a regular difftool and mergetool:
 

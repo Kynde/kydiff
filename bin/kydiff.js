@@ -13,6 +13,7 @@ import fs from 'node:fs';
 const USAGE = `usage: kydiff [options] LEFT RIGHT
        kydiff [options] OURS BASE THEIRS
        kydiff --git [PATH...]
+       kydiff [--diff] [--cached] [REV [REV]] [-- PATH...]
        kydiff FILE-WITH-CONFLICTS
 
 Compare two files side by side and merge them by picking, per difference,
@@ -29,6 +30,12 @@ in progress: it reads ours, base and theirs from git's index for each
 conflicted file (or just the PATHs given), saves to the working tree file
 and stages it once no conflicts are left in it.
 
+With --diff, or --cached (--staged), kydiff shows what git diff would,
+one file at a time: the index against the working tree, HEAD (or REV)
+against the index with --cached, REV against the working tree, or two
+revisions. Without any files, kydiff in a git repository does the same as
+--diff. The working tree copy can be edited and saved over.
+
 With a single FILE that has conflict markers, kydiff uses git's index if the
 file is unmerged there, and otherwise rebuilds the three versions from the
 markers (diff3 or zdiff3 style markers include the base) and saves back to
@@ -44,6 +51,8 @@ options:
   -m, --merged           start with the merged result column shown
       --git              resolve git conflicts (see above)
       --no-stage         with --git, don't git add resolved files
+      --diff             show the changes git diff shows (see above)
+      --cached, --staged show the staged changes, like git diff --cached
       --theme NAME       dark or light
   -h, --help             show this help
 
@@ -56,7 +65,7 @@ git:
   git difftool -t kydiff / git mergetool -t kydiff / kydiff --git`;
 
 function parseArgs(argv) {
-  const o = { files: [], labels: [], output: null, diff: {}, cfg: {}, git: false, stage: true };
+  const o = { files: [], labels: [], output: null, diff: {}, cfg: {}, git: false, stage: true, gitDiff: false, cached: false, paths: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     const val = () => {
@@ -73,8 +82,10 @@ function parseArgs(argv) {
       case '-m': case '--merged': o.cfg.showMerged = true; break;
       case '--git': o.git = true; break;
       case '--no-stage': o.stage = false; break;
+      case '--diff': o.gitDiff = true; break;
+      case '--cached': case '--staged': o.gitDiff = o.cached = true; break;
       case '--theme': o.cfg.theme = val(); break;
-      case '--': o.files.push(...argv.slice(i + 1)); i = argv.length; break;
+      case '--': o.paths = argv.slice(i + 1); i = argv.length; break;
       default:
         if (a.startsWith('-') && a !== '-') die(`unknown option ${a}\n\n${USAGE}`);
         o.files.push(a);
@@ -89,6 +100,8 @@ function die(msg) {
 }
 
 const opts = parseArgs(process.argv.slice(2));
+// "--" only matters to git diff; elsewhere what follows it are files.
+if (opts.paths && !opts.gitDiff) opts.files.push(...opts.paths);
 let cfg;
 try {
   cfg = loadConfig(opts.cfg);
@@ -97,7 +110,7 @@ try {
 }
 
 // A single file with conflicts: from git's index if it is unmerged there.
-if (!opts.git && opts.files.length === 1 && opts.files[0] !== '-') {
+if (!opts.git && !opts.gitDiff && opts.files.length === 1 && opts.files[0] !== '-') {
   try {
     if (git.conflicts(opts.files).length) opts.git = true;
   } catch {
@@ -118,9 +131,15 @@ function loadMarkers(file) {
   return { files, withoutBase: c.withoutBase };
 }
 
+// No files at all: the working tree changes, if this is a git repository.
+if (!opts.git && !opts.gitDiff && !opts.files.length) {
+  if (!git.inRepo()) die(`need two or three files\n\n${USAGE}`);
+  opts.gitDiff = true;
+}
+
 // Each job is one merge to show: { load(prev) -> Merge, output, afterSave }.
 let jobs;
-if (!opts.git && opts.files.length === 1) {
+if (!opts.git && !opts.gitDiff && opts.files.length === 1) {
   const file = opts.files[0];
   let first;
   try {
@@ -133,6 +152,25 @@ if (!opts.git && opts.files.length === 1) {
     output: opts.output || file,
     note: first.withoutBase ? `${first.withoutBase} conflict(s) without a base; git config merge.conflictStyle zdiff3 records it` : null,
   }];
+} else if (opts.gitDiff) {
+  const args = [...(opts.cached ? ['--cached'] : []), ...opts.files, ...(opts.paths ? ['--', ...opts.paths] : [])];
+  let found, names;
+  try {
+    found = git.diffFiles(args);
+    names = git.diffNames(args, opts.cached);
+  } catch (e) {
+    die(e.message);
+  }
+  if (!found.length) {
+    console.log('kydiff: no differences');
+    process.exit(0);
+  }
+  jobs = found.map((f) => ({
+    name: f.path,
+    load: () => new Merge(f.sides.map((side, i) => git.loadDiffSide(side, names[i])), opts.diff),
+    output: null,
+    skipErrors: true,
+  }));
 } else if (opts.git) {
   let found;
   try {
@@ -165,6 +203,7 @@ if (!opts.git && opts.files.length === 1) {
 const term = new Terminal({ mouse: cfg.mouse });
 let app = null;
 const results = [];
+const skipped = [];
 
 let pending = false;
 const schedule = () => {
@@ -175,12 +214,14 @@ const schedule = () => {
 
 function finish() {
   term.stop();
-  if (jobs.length > 1 || opts.git) {
+  for (const s of skipped) console.log(`kydiff: skipped ${s}`);
+  if (opts.git) {
     const done = results.filter((r) => r.code === 0).map((r) => r.name);
     const left = jobs.map((j) => j.name).filter((n) => !done.includes(n));
     if (done.length) console.log(`kydiff: resolved ${done.join(', ')}`);
     if (left.length) console.log(`kydiff: not resolved ${left.join(', ')}`);
   }
+  if (opts.gitDiff) process.exit(0);
   process.exit(results.length === jobs.length && results.every((r) => r.code === 0) ? 0 : 1);
 }
 
@@ -190,6 +231,12 @@ function open(i) {
   try {
     model = job.load(null);
   } catch (e) {
+    // A file git diff lists that can't be shown (binary): go on to the next.
+    if (job.skipErrors) {
+      skipped.push(e.message);
+      results.push({ name: job.name, code: 0 });
+      return i + 1 < jobs.length ? open(i + 1) : finish();
+    }
     term.stop();
     die(`${job.name ? job.name + ': ' : ''}${e.message}`);
   }
