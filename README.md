@@ -23,6 +23,26 @@ kydiff --diff main -- src/        # any git diff revisions and paths
 kydiff conflicted.c               # a file with conflict markers
 ```
 
+## Install
+
+kydiff has no dependencies and no build step. From a checkout:
+
+```
+git clone https://github.com/Kynde/kydiff.git && cd kydiff
+npm link             # or: npm install -g .
+```
+
+`npm link` symlinks to the checkout, so a `git pull` updates it. If your Node
+comes from a version manager (fnm, nvm), npm's global installs belong to the
+active Node version. To keep kydiff on your PATH across versions, symlink the
+script yourself instead:
+
+```
+ln -s "$PWD/bin/kydiff.js" ~/.local/bin/kydiff
+```
+
+You can also run it in place with `node bin/kydiff.js`.
+
 ## How it works
 
 Each difference ("hunk") is resolved by taking the **left** side, the
